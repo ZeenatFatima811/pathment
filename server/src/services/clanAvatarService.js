@@ -1,16 +1,16 @@
 const { models } = require('../db');
 const authz = require('./authzService');
+const { PERMISSIONS } = require('../config/permissions');
 const { ForbiddenError, NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 
 async function editableClan(id, user) {
   const clan = await models.Clan.findByPk(id);
   if (!clan) throw new NotFoundError('Clan not found');
-  const manager = await authz.can(user, 'clan.manage_members', { clanId: id, programId: clan.programId });
-  const membership = manager ? null : await models.ClanMembership.findOne({
-    where: { clanId: id, userId: user.id, status: 'active', role: ['lead_mentor', 'co_mentor'] },
-  });
-  if (!manager && !membership) throw new ForbiddenError('Only this clan’s mentors can change its photo');
+  const resource = { clanId: id, programId: clan.programId };
+  const allowed = await authz.can(user, PERMISSIONS.CLAN_MANAGE_MEMBERS, resource)
+    || await authz.can(user, PERMISSIONS.CLAN_AVATAR_MANAGE, resource);
+  if (!allowed) throw new ForbiddenError('You do not have permission to change this clan’s photo');
   return clan;
 }
 async function setAvatar(id, user, file) {
