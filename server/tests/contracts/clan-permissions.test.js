@@ -70,7 +70,7 @@ describe('the clan access reply', () => {
   test('a co-mentor starts with everything a lead can turn off', async () => {
     const response = await accessOf(clan.id, coMentor);
 
-    for (const key of ['mentee.view', 'task.assign', 'task.review', 'analytics.view']) {
+    for (const key of ['clan.avatar_manage', 'mentee.view', 'task.assign', 'task.review', 'analytics.view']) {
       expect(response.body.data.permissions).toContain(key);
     }
   });
@@ -88,6 +88,28 @@ describe('the clan access reply', () => {
     // The rest are untouched. A revoke is one permission, not a demotion.
     expect(response.body.data.permissions).toContain('task.assign');
     expect(response.body.data.permissions).toContain('mentee.view');
+  });
+
+  test('the lead can revoke and restore a co-mentor’s clan photo permission', async () => {
+    await request(app)
+      .patch(`/api/clans/${clan.id}/members/${coMentor.id}/permissions`)
+      .set('Authorization', authHeader(lead))
+      .send({ denied: ['clan.avatar_manage'] })
+      .expect(200);
+
+    const response = await accessOf(clan.id, coMentor);
+
+    expect(response.body.data.permissions).not.toContain('clan.avatar_manage');
+
+    await request(app)
+      .patch(`/api/clans/${clan.id}/members/${coMentor.id}/permissions`)
+      .set('Authorization', authHeader(lead))
+      .send({ denied: [] })
+      .expect(200);
+
+    const restored = await accessOf(clan.id, coMentor);
+
+    expect(restored.body.data.permissions).toContain('clan.avatar_manage');
   });
 
   test('a revoke in one clan leaves the same person alone in another', async () => {

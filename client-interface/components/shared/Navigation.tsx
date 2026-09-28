@@ -25,9 +25,9 @@ import {
 import { NavLink } from '@/lib/config/navigation';
 import { useNavPreferences } from '@/lib/hooks/shared';
 import { usePermissions } from '@/lib/hooks/usePermissions';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, CLAN_ROLE_LABELS } from '@/lib/context/ClanContext';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
-import { SelectMenu } from './SelectMenu';
+import { Avatar } from './Avatar';
 import { CommandPalette } from './CommandPalette';
 import { LiveMeetingBanner } from './LiveMeetingBanner';
 import { FeedbackDrawer } from './FeedbackDrawer';
@@ -162,35 +162,36 @@ export default function Navigation({ role }: NavigationProps) {
   };
 
   // ── Clan scope (multi-clan mentors) ───────────────────────────────────────
-  // Only meaningful in the mentor view, and only when the user mentors 2+ clans.
   const renderClanScope = () => {
-    if (role === 'mentor' && clans.length >= 2) {
-      const options = [
-        { value: ALL_CLANS, label: 'All clans' },
-        ...clans.map((c) => ({ value: c.id, label: c.name })),
-      ];
-      return (
-        <SelectMenu
-          value={activeClanId}
-          onChange={setActiveClanId}
-          options={options}
-          ariaLabel="Filter by clan"
-          className="w-full"
-        />
-      );
-    }
-    if (role === 'mentee' && menteeClans.length >= 2) {
-      return (
-        <SelectMenu
-          value={menteeActiveClanId || menteeClans[0].id}
-          onChange={setMenteeActiveClanId}
-          options={menteeClans.map((c) => ({ value: c.id, label: c.name }))}
-          ariaLabel="Switch clan"
-          className="w-full"
-        />
-      );
-    }
-    return null;
+    const visibleClans = role === 'mentor' ? clans : role === 'mentee' ? menteeClans : [];
+    if (!visibleClans.length) return null;
+
+    const selectedClanId = role === 'mentor' ? activeClanId : menteeActiveClanId || menteeClans[0]?.id;
+    const selectClan = role === 'mentor' ? setActiveClanId : setMenteeActiveClanId;
+
+    return (
+      <div className="space-y-1" aria-label="Your clans">
+        {visibleClans.map((clan) => {
+          const selected = selectedClanId === clan.id;
+          return (
+            <button
+              key={clan.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => selectClan(clan.id)}
+              className={`flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors ${selected ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Avatar name={clan.name} src={clan.avatarUrl} size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{clan.name}</span>
+                <span className="block truncate text-xs text-slate-500">{CLAN_ROLE_LABELS[clan.role]}</span>
+              </span>
+              {selected && <Check className="h-4 w-4 shrink-0 text-brand-600" />}
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
   // ── Shared render helpers ─────────────────────────────────────────────────

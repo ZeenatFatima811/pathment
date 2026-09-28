@@ -16,6 +16,7 @@ export const PERMISSIONS = {
   INVITE_CREATE: 'invite.create',
   CLAN_CREATE: 'clan.create',
   CLAN_MANAGE_MEMBERS: 'clan.manage_members',
+  CLAN_AVATAR_MANAGE: 'clan.avatar_manage',
   MENTEE_VIEW: 'mentee.view',
   MENTEE_MANAGE: 'mentee.manage',
   MENTEE_ADD: 'mentee.add',
@@ -44,6 +45,7 @@ export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
  * Keep in sync with the server's co_mentor role bundle (server/src/config/roles.js).
  */
 export const CO_MENTOR_PERMISSIONS: { key: Permission; label: string; description: string }[] = [
+  { key: PERMISSIONS.CLAN_AVATAR_MANAGE, label: 'Change clan photo', description: 'Upload or remove this clan\'s profile photo.' },
   { key: PERMISSIONS.MENTEE_VIEW, label: 'View mentees', description: 'See mentee profiles, progress, and submissions.' },
   { key: PERMISSIONS.MENTEE_MANAGE, label: 'Manage mentees', description: 'Add notes, manage placement, and act on insights.' },
   { key: PERMISSIONS.MENTEE_ADD, label: 'Add mentees', description: 'Bring new mentees into the clan or invite them by email.' },
