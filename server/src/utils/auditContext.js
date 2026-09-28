@@ -9,7 +9,30 @@ const { models } = require('../db');
 const store = new AsyncLocalStorage();
 
 const runWithRequestContext = (ctx, fn) => store.run(ctx, fn);
-const getRequestContext = () => store.getStore() || {};
+
+/**
+ * A context to fall back on when nothing has been entered for this execution.
+ *
+ * Several services now refuse to run without a workspace, because a
+ * tenant-scoped query with no tenant is a bug rather than a whole-table read.
+ * The app always has one: the request middleware sets it per call, and
+ * `forEachWorkspace` sets it per background pass.
+ *
+ * A TEST HARNESS has neither. It calls services directly, and its setup hook
+ * and its test body are separate calls from the runner — so an AsyncLocalStorage
+ * context entered in the hook does not reliably reach the test. Forty-one tests
+ * across seven suites were failing on a guard that was working exactly as
+ * designed, with nothing wrong on the production path.
+ *
+ * So the harness states, once, which workspace its database IS. Nothing on the
+ * request path calls this: a server that set a default would answer the next
+ * tenant's request with the previous tenant's id, which is the failure this
+ * whole mechanism exists to prevent.
+ */
+let defaultContext = null;
+const setDefaultRequestContext = (ctx) => { defaultContext = ctx || null; };
+
+const getRequestContext = () => store.getStore() || defaultContext || {};
 
 /**
  * Record the acting user on the current request context. Called by the auth
@@ -53,4 +76,4 @@ async function createAuditLog(data) {
   }
 }
 
-module.exports = { runWithRequestContext, getRequestContext, setRequestUser, setRequestOrganization, createAuditLog };
+module.exports = { runWithRequestContext, setDefaultRequestContext, getRequestContext, setRequestUser, setRequestOrganization, createAuditLog };
