@@ -890,6 +890,112 @@ class CertificateVerificationService {
     return recipients.length;
   }
 
+  /**
+   * Nudge the people who still owe a review — and change nothing else.
+   *
+   * "Remind mentors" used to call `open()`, which is not a reminder at all: it
+   * rewrites every pending row back to the AI's grade (dropping a staged change
+   * and clearing `overridden`) and destroys the clan's approval wherever the
+   * grade moved. Pressing a nudge button could therefore un-approve clans and
+   * silently reset decisions. This reads, and only notifies.
+   *
+   * It also mails the right people the right number. The old notice went to
+   * every mentor of every clan holding a pending row and told them all the same
+   * GLOBAL figure — a mentor with two left to do was told "402 of your mentees
+   * have been graded", which is how a reminder trains people to ignore it. Each
+   * mentor now gets their own count, and a mentor with nothing outstanding is
+   * not written to at all.
+   */
+  async remindReviewers(templateId, { deadline = null } = {}, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can remind reviewers');
+    }
+    const template = await models.CertificateTemplate.findByPk(templateId);
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    // Moving the deadline is the one change a reminder may legitimately make,
+    // and only when the admin explicitly passes a new one.
+    if (deadline) {
+      template.verificationDeadline = deadline;
+      await template.save();
+    }
+
+    const pendingRows = await models.CertificateVerification.findAll({
+      where: { templateId, status: 'pending' },
+      attributes: ['menteeId', 'clanId'],
+      raw: true
+    });
+    // Historical rows can name people who have since left; only current
+    // memberships are somebody's outstanding work.
+    const pending = await this._activeReviewRows(pendingRows, template.programId);
+    const outstandingByClan = new Map();
+    for (const row of pending) {
+      if (!row.clanId) continue;
+      outstandingByClan.set(row.clanId, (outstandingByClan.get(row.clanId) || 0) + 1);
+    }
+    const clanIds = [...outstandingByClan.keys()];
+    if (!clanIds.length) {
+      return { notified: 0, clans: 0, outstanding: 0, unassigned: pending.length };
+    }
+
+    const memberships = await models.ClanMembership.findAll({
+      where: {
+        clanId: { [Op.in]: clanIds },
+        role: { [Op.in]: CertificateVerificationService.MENTOR_ROLES },
+        status: 'active'
+      },
+      attributes: ['userId', 'clanId'],
+      raw: true
+    });
+
+    const owedBy = new Map();
+    for (const m of memberships) {
+      const owed = outstandingByClan.get(m.clanId) || 0;
+      if (!owed) continue;
+      owedBy.set(m.userId, (owedBy.get(m.userId) || 0) + owed);
+    }
+    if (!owedBy.size) {
+      return { notified: 0, clans: clanIds.length, outstanding: pending.length, unassigned: 0 };
+    }
+
+    const due = template.verificationDeadline
+      ? ` by ${new Date(template.verificationDeadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      : '';
+
+    let notified = 0;
+    for (const [userId, owed] of owedBy.entries()) {
+      try {
+        await notificationOrchestrator.dispatch({
+          eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_REQUESTED,
+          recipients: [{ userId }],
+          payload: {
+            title: 'Certificate grades still need your review',
+            // Their own number. A reminder that overstates what somebody owes
+            // gets read as noise.
+            message: `${owed} grade${owed === 1 ? '' : 's'} in your clan${owed === 1 ? '' : 's'} still need your review for "${template.name}"${due}.`,
+            actionUrl: `/mentor/certificates?verify=${templateId}`,
+            actionLabel: 'Review grades',
+            relatedEntityType: 'CertificateTemplate',
+            emailSubject: `Pathment: ${owed} certificate grade${owed === 1 ? '' : 's'} to review${due}`
+          }
+        });
+        notified += 1;
+      } catch (err) {
+        logger.warn(`[certificateVerification] reminder to ${userId} failed: ${err.message}`);
+      }
+    }
+
+    logger.info('[certificateVerification] reminded reviewers', {
+      templateId, by: user.id, notified, clans: clanIds.length, outstanding: pending.length
+    });
+    return {
+      notified,
+      clans: clanIds.length,
+      outstanding: pending.length,
+      unassigned: pending.filter((r) => !r.clanId).length
+    };
+  }
+
   /** When a clan finishes, tell the admins it is clear to issue. */
   async _notifyAdminsIfClanComplete(templateId, clanId, actor) {
     if (!clanId) return;

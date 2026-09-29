@@ -172,13 +172,20 @@ const verificationSummary = catchAsync(async (req, res) => {
 });
 
 const remindReviewers = catchAsync(async (req, res) => {
-  const template = await certificateService.getTemplate(req.params.id);
-  const result = await certificateVerificationService.open(
+  // Notify only. This used to re-open the round from the AI results, which
+  // rewrote pending grades and dropped clan approvals — a reminder must not
+  // change a single decision.
+  const result = await certificateVerificationService.remindReviewers(
     req.params.id,
-    (template.aiEvaluation?.results) || [],
-    { deadline: req.body.deadline || null }
+    { deadline: req.body?.deadline || null },
+    req.user
   );
-  res.status(200).json(successResponse(`Reminded ${result.notified} mentor(s)`, result));
+  res.status(200).json(successResponse(
+    result.notified
+      ? `Reminded ${result.notified} mentor(s) across ${result.clans} clan(s) — ${result.outstanding} review(s) outstanding`
+      : 'Nobody to remind — every grade has been reviewed',
+    result
+  ));
 });
 
 
