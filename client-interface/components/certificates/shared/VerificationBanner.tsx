@@ -120,7 +120,14 @@ export function VerificationBanner({
               : `${outstanding.length} of ${realClans.length} clan${realClans.length === 1 ? '' : 's'} have not verified yet`}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          · {summary.verified} of {summary.total} decisions signed off
+          {/* "signed off" counted mentor checks and admin approvals as one
+              number on the ADMIN's own banner. Split, because the two are
+              different steps and only the second releases anything. */}
+          · {summary.verified} of {summary.total} reviewed
+          {typeof summary.mentorVerified === 'number' && summary.mentorVerified > 0
+            && ` · ${summary.mentorVerified} signed off by mentors`}
+          {typeof summary.adminApproved === 'number' && summary.adminApproved > 0
+            && ` · ${summary.adminApproved} approved by an admin`}
           {summary.overridden > 0 && ` · ${summary.overridden} changed`}
           {!!summary.noCertificate && ` · ${summary.noCertificate} no certificate`}
         </span>
@@ -146,7 +153,7 @@ export function VerificationBanner({
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="font-semibold text-foreground">{clan.clanName}</p>
-                <p className="mt-0.5 text-muted-foreground">{clan.verified} of {clan.total} signed off · {percent}%</p>
+                <p className="mt-0.5 text-muted-foreground">{clan.verified} of {clan.total} reviewed · {percent}%</p>
               </div>
               {clan.approved && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-600">

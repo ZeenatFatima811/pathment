@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '../lib/utils/certificate-re
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } });
 const loaded = { exports: {} };
 new Function('exports', 'module', compiled.outputText)(loaded.exports, loaded);
-const { reviewStage, stageMeta, stageOptions, isClearedToSend } = loaded.exports;
+const { reviewStage, stageMeta, stageOptions, isClearedToSend, reviewActionLabels } = loaded.exports;
 
 test('each stage has its own label — the whole point of the change', () => {
   const labels = stageOptions().map((s) => s.label);
@@ -58,5 +58,31 @@ test('every stage explains itself in plain English', () => {
   for (const meta of stageOptions()) {
     assert.ok(meta.description.length > 20, `${meta.stage} needs a real description`);
     assert.equal(stageMeta(meta.stage).label, meta.label);
+  }
+});
+
+test('an admin approves; a mentor signs off — never the same verb', () => {
+  const admin = reviewActionLabels(true);
+  const mentor = reviewActionLabels(false);
+
+  // The button told an admin approving 400 people that they were signing off,
+  // which is the mentors' step and not what the server records for them.
+  assert.match(admin.confirm, /approve/i);
+  assert.match(admin.confirmChanged, /approve/i);
+  assert.doesNotMatch(admin.confirm, /sign off/i);
+  assert.doesNotMatch(admin.confirmChanged, /sign off/i);
+
+  assert.match(mentor.confirm, /sign off/i);
+  assert.match(mentor.confirmChanged, /sign off/i);
+  assert.doesNotMatch(mentor.confirm, /approve/i);
+});
+
+test('the toast matches the button, so the verb never switches mid-action', () => {
+  for (const isAdmin of [true, false]) {
+    const l = reviewActionLabels(isAdmin);
+    const verb = isAdmin ? /approve/i : /sign(ed)? off/i;
+    for (const text of [l.confirm, l.confirmChanged, l.done, l.doneChanged]) {
+      assert.match(text, verb, `"${text}" should use the ${isAdmin ? 'admin' : 'mentor'} verb`);
+    }
   }
 });

@@ -11,6 +11,8 @@ import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { reviewNavigationAction } from '@/lib/utils/review-navigation-keys';
+import { reviewActionLabels } from '@/lib/utils/certificate-review-stage';
+import { usePermissions } from '@/lib/hooks/usePermissions';
 import { certificatesApi, type MenteeEvidence, type EvidenceRoadmap } from '@/lib/services/certificates-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
@@ -54,6 +56,11 @@ interface MenteeEvidenceDrawerProps {
 export function MenteeEvidenceDrawer({
   templateId, menteeId, onClose, onTierChange, onDecided, canDecide = true, initialSelection, navigation,
 }: MenteeEvidenceDrawerProps) {
+  // Signing off is the mentor's step; approving is the admin's. Read from the
+  // same check the server uses to set the stage, so the button never promises
+  // something different from what gets recorded.
+  const { canAccessAdmin } = usePermissions();
+  const actionLabels = reviewActionLabels(canAccessAdmin);
   const [evidence, setEvidence] = useState<MenteeEvidence | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +162,7 @@ export function MenteeEvidenceDrawer({
         ...decisionPayload(draftTier),
         reason: needsReason ? reason.trim() : undefined,
       });
-      toast.success(isChange ? 'Grade changed and signed off' : 'Grade signed off');
+      toast.success(isChange ? actionLabels.doneChanged : actionLabels.done);
       await onDecided?.();
       if (navigation?.onNext) navigation.onNext();
       else onClose();
@@ -415,7 +422,7 @@ export function MenteeEvidenceDrawer({
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                   {v
-                    ? `${isChange ? 'Save change and sign off' : 'Sign off this grade'}${navigation?.onNext ? ' · Next' : ''}`
+                    ? `${isChange ? actionLabels.confirmChanged : actionLabels.confirm}${navigation?.onNext ? ' · Next' : ''}`
                     : 'Set badge'}
                 </button>
                 {reasonMissing && (

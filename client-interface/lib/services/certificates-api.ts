@@ -273,6 +273,10 @@ export interface VerificationSummary {
   overridden: number;
   noCertificate?: number;
   allVerified: boolean;
+  /** Verified by a mentor and still waiting on an admin. */
+  mentorVerified?: number;
+  /** Approved by an admin — the step that releases anything. */
+  adminApproved?: number;
   /** Clans the admin has released for issuing. */
   approvedClans: number;
   /** Verified but not yet released — waiting on the admin. */

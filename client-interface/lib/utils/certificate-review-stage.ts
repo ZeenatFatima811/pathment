@@ -80,3 +80,43 @@ export function stageOptions(): StageMeta[] {
 export function isClearedToSend(row: { stage?: string | null; status?: string | null }): boolean {
   return reviewStage(row).stage === 'admin_approved';
 }
+
+/**
+ * What the act of recording a decision is CALLED, for the person doing it.
+ *
+ * Signing off is the mentor's step: "I have checked this grade." Approving is
+ * the admin's: "this may go out." The button said "Sign off this grade" to
+ * everybody, so an admin approving four hundred people was told they were doing
+ * the mentors' job — the same conflation that made `status` unreadable, showing
+ * up in the verb.
+ *
+ * `isAdmin` should come from the same check the server uses to decide the stage
+ * (`canAccessAdmin` / `hasAdminAccess`), so the label always matches what gets
+ * recorded.
+ */
+export interface ReviewActionLabels {
+  /** Button, when the grade is unchanged. */
+  confirm: string;
+  /** Button, when the grade is being changed at the same time. */
+  confirmChanged: string;
+  /** Toast, unchanged. */
+  done: string;
+  /** Toast, changed. */
+  doneChanged: string;
+}
+
+export function reviewActionLabels(isAdmin: boolean): ReviewActionLabels {
+  return isAdmin
+    ? {
+      confirm: 'Approve this grade',
+      confirmChanged: 'Save change and approve',
+      done: 'Grade approved',
+      doneChanged: 'Grade changed and approved',
+    }
+    : {
+      confirm: 'Sign off this grade',
+      confirmChanged: 'Save change and sign off',
+      done: 'Grade signed off',
+      doneChanged: 'Grade changed and signed off',
+    };
+}
