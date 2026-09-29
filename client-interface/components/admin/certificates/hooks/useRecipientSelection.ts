@@ -1,5 +1,6 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { AWARDED_CERTIFICATES, NO_CERTIFICATE, aiSelection } from '@/lib/utils/certificate-decision';
 import { useState, useMemo, useCallback } from 'react';
 import { toast } from 'sonner';
@@ -135,10 +136,16 @@ export function useRecipientSelection({
         switch (reviewFilter) {
           case 'pending':  return row?.status === 'pending';
           case 'verified': return row?.status === 'verified';
+          // Stage, not status: 'verified' cannot tell these two apart.
+          case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
+          case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
           case 'changed':  return Boolean(row?.overridden);
-          // Sendability belongs to the clan, not the person: the admin
-          // releases a clan and everyone in it becomes sendable at once.
-          case 'sendable': return (clanStates ?? []).some(c => c.clanId === m.clanId && c.canSend);
+          // Sendable needs BOTH: the admin has released the clan, and this
+          // person's own grade is signed off. It used to check only the clan,
+          // which read as "cleared to send" for people nobody had reviewed —
+          // and the server now refuses exactly those.
+          case 'sendable': return row?.status === 'verified'
+            && (clanStates ?? []).some(c => c.clanId === m.clanId && c.canSend);
           default: return true;
         }
       });

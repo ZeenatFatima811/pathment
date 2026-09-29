@@ -1,5 +1,6 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { NO_CERTIFICATE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
 import React from 'react';
 import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock } from 'lucide-react';
@@ -310,7 +311,9 @@ function ReviewNote({
         <CheckCircle2 className="w-2.5 h-2.5" />
         {review.overridden
           ? `Changed by ${review.verifiedBy || 'mentor'} · ${getTierName(review.aiDecision === 'no_certificate' ? NO_CERTIFICATE : review.aiTier || '')} → ${getTierName(reviewSelection(review))}`
-          : `Signed off${review.verifiedBy ? ` by ${review.verifiedBy}` : ''}`}
+          // "Signed off by X" read the same whoever X was. Naming the stage is
+          // what lets an admin scan the roster for their own approvals.
+          : `${reviewStage(review).label}${review.verifiedBy ? ` · ${review.verifiedBy}` : ''}`}
       </span>
     );
   }

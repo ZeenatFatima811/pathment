@@ -1,4 +1,5 @@
 import type { CertificateDecision } from '@/lib/utils/certificate-decision';
+import type { ReviewStage } from '@/lib/utils/certificate-review-stage';
 import { apiClient } from './api-client';
 
 export interface CertificateElement {
@@ -199,8 +200,31 @@ export interface CertificateVerification {
   overridden: boolean;
   overrideReason: string | null;
   status: 'pending' | 'verified';
+  /**
+   * How far the review has got. `status` cannot distinguish a mentor's check
+   * from an admin's approval — both write 'verified' — so this carries the
+   * distinction the admin's roster needs. Optional: an older API build does not
+   * send it, and `reviewStage()` falls back to `status`.
+   */
+  stage?: ReviewStage;
   verifiedAt: string | null;
   verifiedBy: string | null;
+}
+
+/** A certificate that went out with no signed-off grade behind it. */
+export interface UnreviewedIssuedCertificate {
+  instanceId: string;
+  menteeId: string;
+  menteeName: string | null;
+  menteeEmail: string | null;
+  clanId: string | null;
+  clanName: string | null;
+  tier: string;
+  certificateNumber: string | null;
+  issuedAt: string;
+  /** null when the mentee has no review row at all. */
+  reviewStatus: 'pending' | 'verified' | null;
+  reviewStage: ReviewStage | null;
 }
 
 /** Per-clan progress through the review round — what the admin's banner shows. */
@@ -212,10 +236,14 @@ export interface VerificationClanStatus {
   pending: number;
   overridden: number;
   noCertificate?: number;
+  /** Verified by a mentor, still waiting on the admin. */
+  mentorVerified?: number;
+  /** The admin's own approvals — what they have personally cleared. */
+  adminApproved?: number;
   complete: boolean;
   /** Released by the admin — this is what lets the clan's mentors send. */
   approved: boolean;
-  /** Signed off but not released: the admin's move. */
+  /** Verified by mentors but not yet approved by an admin: the admin's move. */
   readyToApprove: boolean;
 }
 
@@ -370,6 +398,7 @@ export interface MenteeEvidence {
   /** What a mentor decided — and, when they overruled the AI, why. */
   verification: {
     status: 'pending' | 'verified';
+    stage?: ReviewStage;
     aiTier: string | null;
     aiMatchScore: number | null;
     finalTier: string | null;
@@ -581,6 +610,23 @@ export const certificatesApi = {
 
   revokeAllTemplateCertificates: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/certificates/templates/${id}/instances`),
+
+  /**
+   * The certificates this template issued that nobody signed off. Read-only, so
+   * the admin sees who is affected before deciding.
+   */
+  unreviewedIssued: (id: string) =>
+    apiClient.get<{ success: boolean; data: { count: number; certificates: UnreviewedIssuedCertificate[] } }>(
+      `/certificates/templates/${id}/unreviewed-issued`),
+
+  /**
+   * Take just those back. Distinct from revokeAllTemplateCertificates, which
+   * destroys every certificate the template issued — no use when most of them
+   * were signed off correctly.
+   */
+  revokeUnreviewed: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string; data: { revoked: number } }>(
+      `/certificates/templates/${id}/unreviewed-issued`),
 
   resendAllTemplateCertificates: (id: string, failedOnly: boolean) =>
     apiClient.post<{ success: boolean; message: string; updated: number }>(`/certificates/templates/${id}/resend`, { failedOnly }),

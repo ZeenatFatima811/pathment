@@ -196,6 +196,28 @@ const revokeClanApproval = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Clan approval withdrawn', result));
 });
 
+/**
+ * What this template issued without anyone signing it off. Read-only, so the
+ * admin sees exactly who is affected before choosing to revoke.
+ */
+const unreviewedIssued = catchAsync(async (req, res) => {
+  const certificates = await certificateVerificationService.unreviewedIssued(req.params.id);
+  res.status(200).json(successResponse(
+    `${certificates.length} certificate(s) were issued without a signed-off grade`,
+    { count: certificates.length, certificates }
+  ));
+});
+
+const revokeUnreviewed = catchAsync(async (req, res) => {
+  const result = await certificateVerificationService.revokeUnreviewed(req.params.id, req.user);
+  res.status(200).json(successResponse(
+    result.revoked
+      ? `Revoked ${result.revoked} certificate(s) that had no signed-off grade`
+      : 'Nothing to revoke — every issued certificate has a signed-off grade',
+    result
+  ));
+});
+
 module.exports = {
   createTemplate,
   listTemplates,
@@ -223,5 +245,7 @@ module.exports = {
   remindReviewers,
   sendToClans,
   approveClan,
-  revokeClanApproval
+  revokeClanApproval,
+  unreviewedIssued,
+  revokeUnreviewed
 };

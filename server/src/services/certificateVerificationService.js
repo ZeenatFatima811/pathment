@@ -91,7 +91,8 @@ class CertificateVerificationService {
             overrideReason: aiDecision === 'no_certificate' ? result.reasoning : null,
             aiMatchScore,
             finalTier: aiTier,
-            status: 'pending'
+            status: 'pending',
+            stage: 'awaiting_mentor'
           }, { transaction });
           created += 1;
           continue;
@@ -268,6 +269,10 @@ class CertificateVerificationService {
       row.overridden = overridden;
       row.overrideReason = decisionReason;
       row.status = 'verified';
+      // An admin's sign-off is also the approval; a mentor's is only the check.
+      // Writing one 'verified' for both is what left an admin unable to tell
+      // their own four hundred decisions from everybody else's.
+      row.stage = (await authzService.hasAdminAccess(user)) ? 'admin_approved' : 'mentor_verified';
       row.verifiedBy = user.id;
       row.verifiedAt = new Date();
       await row.save({ transaction });
@@ -330,12 +335,15 @@ class CertificateVerificationService {
         byClan.set(key, {
           clanId: row.clanId || null,
           clanName: row.clan?.name || 'No clan',
-          total: 0, verified: 0, pending: 0, overridden: 0, noCertificate: 0
+          total: 0, verified: 0, pending: 0, overridden: 0, noCertificate: 0,
+          mentorVerified: 0, adminApproved: 0
         });
       }
       const bucket = byClan.get(key);
       bucket.total += 1;
       if (row.status === 'verified') bucket.verified += 1; else bucket.pending += 1;
+      if (row.stage === 'admin_approved') bucket.adminApproved += 1;
+      else if (row.stage === 'mentor_verified') bucket.mentorVerified += 1;
       if (row.overridden) bucket.overridden += 1;
       if (row.decision === 'no_certificate') bucket.noCertificate += 1;
     }
@@ -359,6 +367,10 @@ class CertificateVerificationService {
       overridden: rows.filter((r) => r.overridden).length,
       noCertificate: rows.filter(r => r.decision === 'no_certificate').length,
       allVerified: rows.length > 0 && rows.every((r) => r.status === 'verified'),
+      // The split an admin actually needs: what they have approved themselves
+      // against what is still only a mentor's check waiting on them.
+      mentorVerified: rows.filter((r) => r.stage === 'mentor_verified').length,
+      adminApproved: rows.filter((r) => r.stage === 'admin_approved').length,
       approvedClans: clans.filter((c) => c.approved).length,
       awaitingApproval: clans.filter((c) => c.readyToApprove).length,
       clans: clans.sort((a, b) => a.clanName.localeCompare(b.clanName))
@@ -406,6 +418,13 @@ class CertificateVerificationService {
           note
         }
       });
+      // Releasing the clan is the admin's approval of what is in it. Without
+      // this the roster still said "mentor verified" on rows the admin had
+      // already cleared to send, which is the question they came to answer.
+      await models.CertificateVerification.update(
+        { stage: 'admin_approved' },
+        { where: { templateId, clanId, status: 'verified' }, transaction }
+      );
       return { approval, pending };
     });
 
@@ -438,27 +457,185 @@ class CertificateVerificationService {
   /**
    * May this user send certificates to these people right now?
    *
-   * Admins always may. Everyone else may only send into a clan the admin has
-   * released — which is the gate that was missing: a mentor could issue the
-   * moment the round opened, skipping the approval step entirely.
+   * Two separate gates, and they are not the same question:
+   *
+   *   1. Has this person's grade been signed off? Nobody may send a
+   *      certificate no human has confirmed — an admin included. This used to
+   *      return early for admins, so `hasAdminAccess` skipped every check;
+   *      combined with `resolveTiers` reading a pending row's tier, one press
+   *      of Issue sent 410 certificates of which 195 had never been reviewed.
+   *      An admin who wants to send an unreviewed grade signs it off first,
+   *      which takes one click and leaves their name on the decision.
+   *
+   *   2. Is the mentee's clan released? That one IS the admin's own call, so
+   *      admins are not gated by it: they may send into a clan they have not
+   *      formally released. Mentors may not — otherwise a mentor could issue
+   *      the moment the round opened, skipping approval entirely.
    *
    * Returns the mentee ids that must NOT be sent to, so the caller can report
    * precisely rather than refusing a whole batch.
    */
-  async blockedRecipients(templateId, menteeIds, user) {
-    if (!Array.isArray(menteeIds) || !menteeIds.length) return [];
-    if (await authzService.hasAdminAccess(user)) return [];
+  async sendBlockers(templateId, menteeIds, user, { transaction = null } = {}) {
+    const empty = { unreviewed: [], unapproved: [] };
+    if (!Array.isArray(menteeIds) || !menteeIds.length) return empty;
+    const isAdmin = await authzService.hasAdminAccess(user);
 
-    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['programId'] });
-    const clanOf = await this._clanOfMentees(menteeIds, template?.programId || null);
-    const approved = await this.approvedClanIds(templateId);
+    const unique = [...new Set(menteeIds.filter(Boolean))];
+    // Has this template ever been reviewed at all? If not there is nothing to
+    // bypass: a certificate with no review round is issued directly, and that is
+    // a real workflow rather than the defect. Gating it would break issuing from
+    // any template that never had an AI evaluation.
+    const hasRound = await this.hasReviewRound(templateId, { transaction });
 
-    return menteeIds.filter((menteeId) => {
+    const reviews = hasRound ? await models.CertificateVerification.findAll({
+      where: { templateId, menteeId: { [Op.in]: unique.length ? unique : [null] } },
+      attributes: ['menteeId', 'status'],
+      raw: true,
+      transaction
+    }) : [];
+    // Inside an open round, a mentee with no review row at all has certainly not
+    // been reviewed. Two such people were issued certificates off the hardcoded
+    // tier fallback, so absence is refused rather than defaulted.
+    const signedOff = new Set(reviews.filter((r) => r.status === 'verified').map((r) => r.menteeId));
+
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['programId'], transaction });
+    const clanOf = await this._clanOfMentees(unique, template?.programId || null);
+    const approved = isAdmin ? null : await this.approvedClanIds(templateId);
+
+    const out = { unreviewed: [], unapproved: [] };
+    for (const menteeId of unique) {
+      if (hasRound && !signedOff.has(menteeId)) { out.unreviewed.push(menteeId); continue; }
+      if (isAdmin) continue;
       const clanId = clanOf.get(menteeId);
       // A mentee with no clan cannot be released by clan, so only an admin can
       // send to them. Refusing here is the safe reading.
-      return !clanId || !approved.has(clanId);
+      if (!clanId || !approved.has(clanId)) out.unapproved.push(menteeId);
+    }
+    return out;
+  }
+
+  /** Has a review round been opened on this template? Row existence is the signal. */
+  async hasReviewRound(templateId, { transaction = null } = {}) {
+    return (await models.CertificateVerification.count({ where: { templateId }, transaction })) > 0;
+  }
+
+  /**
+   * Certificates this template has issued that no human ever signed off.
+   *
+   * The same two conditions the send gate uses, so a preview and the send path
+   * can never disagree: the template HAS a round, and this mentee's row is
+   * absent or not verified. A template with no round at all is issued from
+   * directly, on purpose, and none of its certificates are listed here.
+   *
+   * Read-only. `revokeUnreviewed` is what acts on it.
+   */
+  async unreviewedIssued(templateId, { transaction = null } = {}) {
+    if (!(await this.hasReviewRound(templateId, { transaction }))) return [];
+
+    const instances = await models.CertificateInstance.findAll({
+      where: { templateId },
+      attributes: ['id', 'menteeId', 'tier', 'certificateNumber', 'createdAt', 'organizationId'],
+      include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false }],
+      transaction
     });
+    if (!instances.length) return [];
+
+    const menteeIds = instances.map((row) => row.menteeId);
+    const reviews = await models.CertificateVerification.findAll({
+      where: { templateId, menteeId: { [Op.in]: menteeIds } },
+      attributes: ['menteeId', 'status', 'stage', 'finalTier', 'clanId'],
+      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }],
+      transaction
+    });
+    const reviewOf = new Map(reviews.map((row) => [row.menteeId, row]));
+
+    return instances
+      .filter((instance) => reviewOf.get(instance.menteeId)?.status !== 'verified')
+      .map((instance) => {
+        const review = reviewOf.get(instance.menteeId) || null;
+        return {
+          instanceId: instance.id,
+          menteeId: instance.menteeId,
+          menteeName: instance.mentee
+            ? `${instance.mentee.firstName || ''} ${instance.mentee.lastName || ''}`.trim()
+            : null,
+          menteeEmail: instance.mentee?.email || null,
+          clanId: review?.clanId || null,
+          clanName: review?.clan?.name || null,
+          tier: instance.tier,
+          certificateNumber: instance.certificateNumber,
+          issuedAt: instance.createdAt,
+          reviewStatus: review ? review.status : null,
+          reviewStage: review ? review.stage : null,
+          organizationId: instance.organizationId
+        };
+      });
+  }
+
+  /**
+   * Take those certificates back.
+   *
+   * `certificate_instances` is not paranoid, so this is a real delete: the row
+   * goes, and because `certificate_number` is unique per row a re-issued
+   * certificate gets a NEW number and the old public link stops resolving. The
+   * recipients are not told — the platform has no revocation notice — so this is
+   * deliberately an explicit admin action rather than anything automatic.
+   *
+   * Everything removed is written to the audit log in the SAME transaction
+   * first: if the record cannot be written, nothing is deleted.
+   *
+   * Revoking also unblocks the mentors. While an instance exists, `verify()`
+   * refuses to change the grade ("already issued"); once it is gone the round
+   * can be reviewed properly and re-issued.
+   */
+  async revokeUnreviewed(templateId, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can revoke certificates that were issued without a sign-off');
+    }
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['id', 'name'] });
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    return sequelize.transaction(async (transaction) => {
+      const targets = await this.unreviewedIssued(templateId, { transaction });
+      if (!targets.length) return { revoked: 0, certificates: [] };
+
+      const byOrg = new Map();
+      for (const row of targets) {
+        if (!byOrg.has(row.organizationId)) byOrg.set(row.organizationId, []);
+        byOrg.get(row.organizationId).push(row);
+      }
+      for (const [organizationId, rows] of byOrg.entries()) {
+        await models.AuditLog.create({
+          organizationId,
+          userId: user.id,
+          action: 'certificate.revoked_unreviewed',
+          entityType: 'CertificateTemplate',
+          entityId: templateId,
+          oldValues: {
+            reason: 'Issued without a signed-off grade while a review round was open',
+            template: template.name,
+            count: rows.length,
+            certificates: rows
+          }
+        }, { transaction });
+      }
+
+      await models.CertificateInstance.destroy({
+        where: { id: { [Op.in]: targets.map((row) => row.instanceId) } },
+        transaction
+      });
+
+      logger.info('[certificateVerification] revoked unreviewed certificates', {
+        templateId, by: user.id, revoked: targets.length
+      });
+      return { revoked: targets.length, certificates: targets };
+    });
+  }
+
+  /** The union of both blockers — the ids that must not be sent to. */
+  async blockedRecipients(templateId, menteeIds, user) {
+    const { unreviewed, unapproved } = await this.sendBlockers(templateId, menteeIds, user);
+    return [...new Set([...unreviewed, ...unapproved])];
   }
 
   /** Tell a clan's mentors their certificates are cleared to send. */
@@ -512,6 +689,13 @@ class CertificateVerificationService {
       attributes: ['menteeId', 'finalTier', 'status', 'decision']
     });
     for (const row of rows) {
+      // Only a signed-off row states a tier. This read `finalTier` regardless
+      // of status, and a pending row carries the AI's provisional grade — so
+      // the AI's unconfirmed guess was handed to the issuer as if a human had
+      // confirmed it. On production that issued 193 certificates nobody had
+      // reviewed. An unreviewed mentee is absent here, and `blockedRecipients`
+      // refuses them rather than the caller inventing a tier.
+      if (row.status !== 'verified') continue;
       if (row.decision === 'no_certificate') out.set(row.menteeId, null);
       else if (row.finalTier) out.set(row.menteeId, row.finalTier);
     }
@@ -546,6 +730,7 @@ class CertificateVerificationService {
       overridden: Boolean(json.overridden),
       overrideReason: json.overrideReason || null,
       status: json.status,
+      stage: json.stage || (json.status === 'verified' ? 'mentor_verified' : 'awaiting_mentor'),
       verifiedAt: json.verifiedAt || null,
       verifiedBy: json.verifier
         ? `${json.verifier.firstName || ''} ${json.verifier.lastName || ''}`.trim()

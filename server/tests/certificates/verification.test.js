@@ -225,8 +225,23 @@ describe('mentor verification of certificate grades', () => {
       expect(issued.tier).toBe('gold');
     });
 
-    it('never blocks the admin from issuing an unverified grade', async () => {
+    /**
+     * Inside an open round the admin is exempt from the CLAN RELEASE, not from
+     * review. This asserted the opposite and issued to a mentee nobody had
+     * looked at; on production that shape sent 195 certificates for grades no
+     * human had confirmed.
+     */
+    it('blocks even the admin from issuing an unverified grade inside an open round', async () => {
       await openRound();
+      await expect(certificateService.issueCertificates(
+        { templateId: template.id, recipients: [{ menteeId: mentee.id, tier: 'bronze' }] }, admin.id, admin
+      )).rejects.toThrow(/have not been signed off/i);
+      expect(await models.CertificateInstance.count({ where: { templateId: template.id } })).toBe(0);
+    });
+
+    it('lets the admin issue once the grade is signed off, without releasing the clan', async () => {
+      await openRound();
+      await verification.verify(template.id, mentee.id, {}, admin);
       const res = await certificateService.issueCertificates(
         { templateId: template.id, recipients: [{ menteeId: mentee.id, tier: 'bronze' }] }, admin.id, admin
       );

@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Clock, Search, Sparkles, UserRoundSearch }
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { NO_CERTIFICATE, reviewSelection } from '@/lib/utils/certificate-decision';
+import { reviewStage, type StageTone } from '@/lib/utils/certificate-review-stage';
 import type { CertificateVerification } from '@/lib/services/certificates-api';
 
 export type CertificateReviewMode = 'all' | 'changed' | 'pending';
@@ -131,12 +132,32 @@ export function CertificateReviewDrawer({
   );
 }
 
+/**
+ * The badge said "Signed off" for a mentor's check and for an admin's approval
+ * alike, so an admin could not see which of four hundred rows was their own
+ * decision. It now names the stage the row is actually at.
+ */
+const STAGE_BADGE: Record<StageTone, string> = {
+  neutral:  'bg-muted text-muted-foreground',
+  waiting:  'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  progress: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
+  done:     'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+};
+
 function ReviewStatus({ row }: { row: CertificateVerification }) {
-  if (row.status !== 'verified') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"><Clock className="h-3 w-3" /> Awaiting review</span>;
-  }
-  if (row.overridden) {
+  const stage = reviewStage(row);
+  // A changed grade is worth flagging over the stage: it is the one thing on
+  // this row somebody may need to argue with.
+  if (row.status === 'verified' && row.overridden) {
     return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"><AlertTriangle className="h-3 w-3" /> Changed</span>;
   }
-  return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Signed off</span>;
+  const Icon = stage.tone === 'done' ? CheckCircle2 : Clock;
+  return (
+    <span
+      title={stage.description}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold ${STAGE_BADGE[stage.tone]}`}
+    >
+      <Icon className="h-3 w-3" /> {stage.label}
+    </span>
+  );
 }
