@@ -156,7 +156,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
     rosterClans,
     sortBy, setSortBy,
     recipientType, setRecipientType,
-    selectedMenteeIds, setSelectedMenteeIds,
+    selectedMenteeIds, setSelectedMenteeIds, issuableMenteeIds, hiddenSelectedCount,
     assignedTiers: adminTiers, setAssignedTiers: setAdminTiers,
     recipientMenteesList, recipientMentorsList, recipientPausedList, filtered, allSelected,
     selectedSummary, getEffectiveTier, toggleAll, toggleOne, handleTierChange,
@@ -695,12 +695,17 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   };
 
   const handleIssue = async () => {
-    if (selectedMenteeIds.size === 0) {
-      toast.error('Please select at least one mentee to issue certificates');
+    // Issue to who is SELECTED AND VISIBLE. This read the raw selection, which
+    // survives a filter change — so a select-all followed by narrowing the
+    // filter sent certificates to everybody the filter was hiding.
+    if (issuableMenteeIds.size === 0) {
+      toast.error(selectedMenteeIds.size > 0
+        ? 'Every selected mentee is hidden by the current filters. Clear the filters or select someone visible.'
+        : 'Please select at least one mentee to issue certificates');
       return;
     }
 
-    const recipients = Array.from(selectedMenteeIds).map(id => ({
+    const recipients = Array.from(issuableMenteeIds).map(id => ({
       menteeId: id,
       tier: adminTiers[id] ?? getEffectiveTier(id)
     }));
@@ -1756,7 +1761,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
             />
 
             {}
-            {selectedMenteeIds.size > 0 && (
+            {issuableMenteeIds.size > 0 && (
               <div className="bg-muted/20 border border-border rounded-2xl p-4 flex flex-wrap gap-4 text-xs font-semibold text-muted-foreground">
                 <span>No certificate: {selectedSummary[NO_CERTIFICATE] ?? 0}</span>
                 {criteria.map(c => (
@@ -1774,19 +1779,31 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
                 <Users className="w-4 h-4 text-brand-500" />
                 <span>
-                  <span className="text-foreground font-bold">{selectedMenteeIds.size}</span>{' '}
+                  {/* The number that will actually be issued, not the raw
+                      selection. Those diverge the moment a filter hides someone
+                      who is ticked, and this footer read the raw one: 621 while
+                      the table showed 70. */}
+                  <span className="text-foreground font-bold">{issuableMenteeIds.size}</span>{' '}
                   {recipientType === 'all'
-                    ? `recipient${selectedMenteeIds.size !== 1 ? 's' : ''}`
+                    ? `recipient${issuableMenteeIds.size !== 1 ? 's' : ''}`
                     : recipientType === 'mentees'
-                      ? `mentee${selectedMenteeIds.size !== 1 ? 's' : ''}`
-                      : `mentor${selectedMenteeIds.size !== 1 ? 's' : ''}`}{' '}
+                      ? `mentee${issuableMenteeIds.size !== 1 ? 's' : ''}`
+                      : `mentor${issuableMenteeIds.size !== 1 ? 's' : ''}`}{' '}
                   selected
                 </span>
+                {hiddenSelectedCount > 0 && (
+                  <span
+                    className="text-amber-600 dark:text-amber-400"
+                    title="Still ticked, but hidden by the current filters. They will not receive anything."
+                  >
+                    · {hiddenSelectedCount} more hidden by filters
+                  </span>
+                )}
               </div>
               <button
                 type="button"
                 onClick={handleIssue}
-                disabled={issuing || selectedMenteeIds.size === 0 || selectedSummary[NO_CERTIFICATE] === selectedMenteeIds.size}
+                disabled={issuing || issuableMenteeIds.size === 0 || selectedSummary[NO_CERTIFICATE] === issuableMenteeIds.size}
                 className="flex items-center gap-1.5 px-6 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-white rounded-xl font-medium text-sm shadow-sm transition-all"
               >
                 {issuing ? <Loader2 className="animate-spin w-3.5 h-3.5" /> : <Award className="w-3.5 h-3.5" />}

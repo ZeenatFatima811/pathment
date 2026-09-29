@@ -189,10 +189,33 @@ export function useRecipientSelection({
     [allFilteredIds, selectedMenteeIds]
   );
 
+  /**
+   * WHO WOULD ACTUALLY RECEIVE A CERTIFICATE: the selection intersected with what
+   * the filters are currently showing.
+   *
+   * `selectedMenteeIds` survives a filter change, which is what you want for the
+   * checkboxes — narrow to a clan, tick some people, widen again, they are still
+   * ticked. It is NOT what you want for issuing. Select-all with no filter put
+   * 621 people in the set; applying "Approved by an admin" then showed ~70 rows
+   * while the footer still read "621 mentees selected", and Issue sent
+   * `Array.from(selectedMenteeIds)` — all 621, including everyone the filter was
+   * deliberately hiding.
+   *
+   * Everything a person can act on is derived from this instead, so the count
+   * they read is the count that goes out.
+   */
+  const issuableMenteeIds = useMemo(() => {
+    const visible = new Set(allFilteredIds);
+    return new Set([...selectedMenteeIds].filter(id => visible.has(id)));
+  }, [selectedMenteeIds, allFilteredIds]);
+
+  /** Selected, but hidden by the current filters — surfaced so it is never silent. */
+  const hiddenSelectedCount = selectedMenteeIds.size - issuableMenteeIds.size;
+
   const selectedSummary = useMemo(() => {
     const summary: Record<string, number> = {};
     criteria.forEach(c => { summary[c.id] = 0; });
-    selectedMenteeIds.forEach(id => {
+    issuableMenteeIds.forEach(id => {
       const tier = getEffectiveTier(id);
       if (summary[tier] !== undefined) {
         summary[tier] = (summary[tier] ?? 0) + 1;
@@ -201,7 +224,7 @@ export function useRecipientSelection({
       }
     });
     return summary;
-  }, [criteria, selectedMenteeIds, getEffectiveTier]);
+  }, [criteria, issuableMenteeIds, getEffectiveTier]);
 
   const toggleAll = useCallback(() => {
     setSelectedMenteeIds(prev => {
@@ -296,6 +319,8 @@ export function useRecipientSelection({
     setRecipientType,
     selectedMenteeIds,
     setSelectedMenteeIds,
+    issuableMenteeIds,
+    hiddenSelectedCount,
     assignedTiers,
     setAssignedTiers,
     recipientMenteesList,

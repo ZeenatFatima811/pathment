@@ -272,7 +272,21 @@ class CertificateVerificationService {
       // An admin's sign-off is also the approval; a mentor's is only the check.
       // Writing one 'verified' for both is what left an admin unable to tell
       // their own four hundred decisions from everybody else's.
-      row.stage = (await authzService.hasAdminAccess(user)) ? 'admin_approved' : 'mentor_verified';
+      //
+      // The stage does not go BACKWARDS on an unchanged grade. A mentor working
+      // through their queue after the admin had already approved a row used to
+      // rewrite it to 'mentor_verified', quietly un-approving work the admin had
+      // done — so an admin who approved a batch came back to find only some of
+      // it still showing as theirs. A mentor re-confirming the same grade leaves
+      // the approval standing; a mentor who actually CHANGES it drops the row
+      // back, because the admin approved the old grade, not the new one.
+      if (await authzService.hasAdminAccess(user)) {
+        row.stage = 'admin_approved';
+      } else if (row.stage === 'admin_approved' && !changed) {
+        row.stage = 'admin_approved';
+      } else {
+        row.stage = 'mentor_verified';
+      }
       row.verifiedBy = user.id;
       row.verifiedAt = new Date();
       await row.save({ transaction });

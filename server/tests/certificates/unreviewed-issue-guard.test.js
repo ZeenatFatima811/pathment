@@ -225,6 +225,30 @@ describe('an unreviewed grade cannot be issued', () => {
       expect(still.stage).toBe('awaiting_mentor');
     });
 
+    it('does not let a mentor un-approve what an admin already approved', async () => {
+      await verification.verify(template.id, unreviewed.id, {}, admin);
+      expect((await models.CertificateVerification.findOne({
+        where: { templateId: template.id, menteeId: unreviewed.id } })).stage).toBe('admin_approved');
+
+      // A mentor working their queue re-confirms the SAME grade. This used to
+      // rewrite the row to mentor_verified, so an admin who had approved a batch
+      // came back to find only part of it still showing as theirs.
+      await verification.verify(template.id, unreviewed.id, {}, lead);
+      expect((await models.CertificateVerification.findOne({
+        where: { templateId: template.id, menteeId: unreviewed.id } })).stage).toBe('admin_approved');
+    });
+
+    it('does drop back to mentor_verified when the mentor changes the grade', async () => {
+      await verification.verify(template.id, unreviewed.id, {}, admin);
+      // The admin approved the old grade, not this one, so the approval lapses.
+      await verification.verify(template.id, unreviewed.id,
+        { decision: 'no_certificate', reason: 'Did not complete the work' }, lead);
+      const row = await models.CertificateVerification.findOne({
+        where: { templateId: template.id, menteeId: unreviewed.id } });
+      expect(row.stage).toBe('mentor_verified');
+      expect(row.decision).toBe('no_certificate');
+    });
+
     it('reports the split in the summary', async () => {
       let summary = await verification.summary(template.id);
       expect(summary).toMatchObject({ mentorVerified: 1, adminApproved: 0 });
