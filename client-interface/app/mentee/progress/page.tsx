@@ -1,4 +1,7 @@
 'use client';
+import { useClan } from '@/lib/context/ClanContext';
+import { StandingClanActivity } from '@/components/shared/StandingClanActivity';
+import { ProgramCompletionPanel } from '@/components/shared/ProgramCompletionPanel';
 
 import { Loader2, TrendingUp, TrendingDown, Minus, Flag, Clock, Check, CheckCircle2, Route } from 'lucide-react';
 import { useMyProgress } from '@/lib/hooks/mentee';
@@ -56,6 +59,13 @@ function MyRoadmapsSection() {
 }
 
 export default function MenteeProgress() {
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const clan = menteeClans.find(c => c.id === menteeActiveClanId);
+  if (clan?.kind === 'standing') return <StandingClanActivity clanId={clan.id} />;
+  if (clan?.frozenAt && clan.programId) return <ProgramCompletionPanel programId={clan.programId} />;
+  return <ProgramProgress />;
+}
+function ProgramProgress() {
   const { progress, loading, error, refetch } = useMyProgress();
 
   if (loading) {
