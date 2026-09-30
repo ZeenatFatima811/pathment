@@ -4,6 +4,22 @@ const programController = require('../controllers/programController');
 const { authenticate, authorize, optionalAuth } = require('../middlewares/auth');
 const { validate } = require('../middlewares/validate');
 const programValidation = require('../validations/programValidation');
+const lifecycle = require('../services/programLifecycleService');
+const { catchAsync } = require('../middlewares/errorHandler');
+const { successResponse } = require('../utils/responses');
+
+router.get('/:id/completion', authenticate, catchAsync(async (req, res) => {
+  res.json(successResponse('Program completion', await lifecycle.preview(req.params.id, req.user)));
+}));
+router.post('/:id/close', authenticate, catchAsync(async (req, res) => {
+  res.json(successResponse('Program closed', await lifecycle.closeProgram(req.params.id, req.user)));
+}));
+router.post('/:id/reopen', authenticate, catchAsync(async (req, res) => {
+  res.json(successResponse('Program reopened', await lifecycle.reopenProgram(req.params.id, req.body.reason, req.user)));
+}));
+router.get('/:id/results', authenticate, catchAsync(async (req, res) => {
+  res.json(successResponse('Final results', await lifecycle.results(req.params.id, req.user)));
+}));
 
 /**
  * @route   GET /api/programs

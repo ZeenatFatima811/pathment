@@ -1,0 +1,168 @@
+const { Op } = require('sequelize');
+const { models, sequelize } = require('../db');
+const authz = require('./authzService');
+const clanService = require('./clanService');
+const { PERMISSIONS } = require('../config/permissions');
+const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+
+class StandingClanService {
+  async assertCloseoutPlan(organizationId) {
+    await require('./organizationService').requireEntitlement(
+      organizationId,
+      'programCompletionStanding',
+      'Program closeout and standing clans are available on Growth and Scale plans',
+    );
+  }
+
+  async eligiblePrograms(actor) {
+    const clanIds = await authz.mentoredClanIds(actor.id);
+    if (!clanIds.length) return [];
+    const clans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds }, kind: 'cohort' }, attributes: ['programId', 'organizationId'] });
+    if (!clans.length) return [];
+    const organizationId = clans[0].organizationId || require('../utils/auditContext').getRequestContext()?.organizationId;
+    if (organizationId && !(await require('./organizationService').entitlement(organizationId, 'programCompletionStanding'))) {
+      return [];
+    }
+    return models.Program.findAll({ where: { id: { [Op.in]: [...new Set(clans.map(c => c.programId))] }, status: 'completed', closedAt: { [Op.ne]: null } }, attributes: ['id', 'name', 'endDate'] });
+  }
+
+  async request(input, actor) {
+    const name = String(input.name || '').trim();
+    if (!name || name.length > 150) throw new ValidationError('Choose a clan name of 1–150 characters');
+    if (!(await this.eligiblePrograms(actor)).some(p => p.id === input.programId)) throw new ForbiddenError('You can request a standing clan after a program you mentor has been formally closed');
+    const program = await models.Program.findByPk(input.programId, { attributes: ['id', 'organizationId'] });
+    if (!program) throw new NotFoundError('Program not found');
+    await this.assertCloseoutPlan(program.organizationId);
+    return sequelize.transaction(async transaction => {
+      // Serialize submissions by this mentor so retries return the pending request.
+      await models.User.findByPk(actor.id, { transaction, lock: transaction.LOCK.UPDATE });
+      const existing = await models.StandingClanRequest.findOne({ where: { mentorId: actor.id, programId: input.programId, status: 'pending' }, transaction });
+      if (existing) return existing;
+      return models.StandingClanRequest.create({ mentorId: actor.id, programId: input.programId, name, description: String(input.description || '').trim().slice(0, 4000) || null }, { transaction });
+    });
+  }
+
+  async list(actor) {
+    const admin = await authz.hasAdminAccess(actor);
+    const programScope = admin ? await authz.adminProgramScope(actor, { permission: PERMISSIONS.CLAN_CREATE }) : null;
+    return models.StandingClanRequest.findAll({ where: admin ? (Array.isArray(programScope) ? { programId: { [Op.in]: programScope } } : {}) : { mentorId: actor.id },
+      include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'] },
+        { model: models.User, as: 'mentor', attributes: ['id', 'firstName', 'lastName'] },
+        { model: models.User, as: 'reviewer', attributes: ['id', 'firstName', 'lastName'] }],
+      order: [['createdAt', 'DESC']] });
+  }
+
+  async decide(requestId, decision, note, actor) {
+    if (!await authz.hasAdminAccess(actor)) throw new ForbiddenError('Only an admin can decide standing clan requests');
+    if (!['approved', 'rejected'].includes(decision)) throw new ValidationError('Choose approve or reject');
+    if (decision === 'rejected' && !String(note || '').trim()) throw new ValidationError('Explain the rejection so the mentor knows why');
+    const saved = await sequelize.transaction(async transaction => {
+      const request = await models.StandingClanRequest.findByPk(requestId, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!request) throw new NotFoundError('Request not found');
+      if (!await authz.can(actor, PERMISSIONS.CLAN_CREATE, { programId: request.programId })) throw new ForbiddenError('You cannot approve clans for this program');
+      if (request.status === decision) return request;
+      if (request.status !== 'pending') throw new ConflictError('This request has already been decided');
+      let clan = null;
+      if (decision === 'approved') {
+        const program = await models.Program.findByPk(request.programId, { transaction, lock: transaction.LOCK.SHARE });
+        if (!program?.closedAt || program.status !== 'completed') throw new ValidationError('Close the program before approving this request');
+        await this.assertCloseoutPlan(program.organizationId);
+        clan = await clanService.createClan({ programId: request.programId, name: request.name, description: request.description,
+          kind: 'standing', leadMentorId: request.mentorId }, actor.id, { transaction, standingApproval: true });
+      }
+      await request.update({ status: decision, reviewedBy: actor.id, reviewedAt: new Date(), decisionNote: String(note || '').trim() || null, createdClanId: clan?.id || null }, { transaction });
+      return request;
+    });
+    await this._notifyMentorDecision(saved);
+    return saved;
+  }
+
+  async _notifyMentorDecision(request) {
+    const approved = request.status === 'approved';
+    const note = request.decisionNote ? ` Note: ${request.decisionNote}` : '';
+    try {
+      await require('./notificationOrchestrator').dispatch({
+        eventKey: require('../config/notificationMatrix').NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED,
+        recipients: [{ userId: request.mentorId }],
+        payload: {
+          title: approved ? 'Standing clan approved' : 'Standing clan request rejected',
+          message: approved
+            ? `Your standing clan "${request.name}" was approved. Open Clan team to choose mentees.`
+            : `Your standing clan request "${request.name}" was not approved.${note}`,
+          actionUrl: approved && request.createdClanId ? '/mentor/clan-team' : '/mentor/dashboard',
+          actionLabel: approved ? 'Open clan team' : 'View cockpit',
+          relatedEntityType: approved ? 'clan' : 'standing_clan_request',
+          relatedEntityId: approved ? request.createdClanId : request.id,
+        },
+      });
+    } catch (err) {
+      // Decision already saved — never fail the admin action on notification delivery.
+      console.warn('standingClanService: decision notification failed', err?.message || err);
+    }
+  }
+
+  async assertCanManage(clanId, actor) {
+    const clan = await models.Clan.findByPk(clanId);
+    if (!clan) throw new NotFoundError('Clan not found');
+    if (clan.kind !== 'standing') throw new ValidationError('This operation is only for standing clans');
+    if (!await authz.can(actor, PERMISSIONS.CLAN_MANAGE_MEMBERS, await authz.scopeOfClan(clanId))) throw new ForbiddenError('You cannot manage this clan');
+    return clan;
+  }
+
+  async addMenteesToStandingClan(clanId, menteeIds, actor) {
+    await this.assertCanManage(clanId, actor);
+    if (!Array.isArray(menteeIds) || !menteeIds.length || menteeIds.length > 100) throw new ValidationError('Select between 1 and 100 mentees');
+    return sequelize.transaction(async transaction => {
+      const clan = await models.Clan.findByPk(clanId, { transaction, lock: transaction.LOCK.UPDATE });
+      const rows = [];
+      for (const userId of [...new Set(menteeIds)]) {
+        const user = await models.User.findByPk(userId, { transaction });
+        const workspace = await models.OrganizationMembership.findOne({ where: { organizationId: clan.organizationId, userId, status: 'active' }, transaction });
+        const profile = await models.MenteeProfile.findOne({ where: { userId }, transaction });
+        if (!workspace || !user || user.status !== 'active' || !profile) throw new ValidationError('Select active mentees in your organization');
+        const existing = await models.ClanMembership.findOne({ where: { clanId, userId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } }, transaction });
+        if (existing) { rows.push(existing); continue; }
+        const count = await models.ClanMembership.count({ where: { clanId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } }, transaction });
+        if (clan.maxMentees && count >= clan.maxMentees) throw new ConflictError('This clan is full. Increase its capacity before adding more mentees.');
+        rows.push(await clanService.addMember(clanId, { userId, role: 'mentee' }, actor, { transaction }));
+      }
+      return rows;
+    });
+  }
+
+  async activity(clanId, { period = '30d' } = {}, actor) {
+    const clan = await models.Clan.findByPk(clanId);
+    if (!clan || clan.kind !== 'standing') throw new NotFoundError('Standing clan not found');
+    if (!await authz.hasAdminAccess(actor) && !(await authz.mentoredClanIds(actor.id)).includes(clanId) && !await models.ClanMembership.count({ where: { clanId, userId: actor.id, status: 'active' } })) throw new ForbiddenError('You do not have access to this clan');
+    if (!['30d', 'quarter', 'joined'].includes(period)) throw new ValidationError('Choose last 30 days, this quarter, or since joining');
+    const now = new Date();
+    const since = period === 'quarter' ? new Date(Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3, 1)) : new Date(now.getTime() - 30 * 86400000);
+    const canViewRoster = await authz.can(actor, PERMISSIONS.MENTEE_VIEW, await authz.scopeOfClan(clanId));
+    const memberships = await models.ClanMembership.findAll({ where: { clanId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] }, ...(!canViewRoster ? { userId: actor.id } : {}) }, include: [{ model: models.User, as: 'user', attributes: ['firstName', 'lastName'] }] });
+    const mentees = [];
+    for (const member of memberships) {
+      const from = period === 'joined' ? new Date(member.joinedAt) : new Date(Math.max(since.getTime(), new Date(member.joinedAt).getTime()));
+      const range = { [Op.between]: [from, now] };
+      const menteeId = member.userId;
+      const [assigned, completed, raised, resolved, logs, attendance, kudos] = await Promise.all([
+        models.AssignedTask.count({ where: { clanId, menteeId, assignedAt: range } }),
+        models.AssignedTask.count({ where: { clanId, menteeId, status: 'completed', completedAt: range } }),
+        models.Blocker.count({ where: { clanId, menteeId, createdAt: range } }),
+        models.Blocker.count({ where: { clanId, menteeId, status: 'resolved', resolvedAt: range } }),
+        models.DailyLogEntry.findAll({ where: { clanId, menteeId, dateKey: { [Op.between]: [from.toISOString().slice(0, 10), now.toISOString().slice(0, 10)] } }, attributes: ['dateKey'], order: [['dateKey', 'DESC']] }),
+        models.CohortReviewEntry.findAll({ where: { menteeId }, attributes: ['attendance'], include: [{ model: models.CohortReviewSession, as: 'session', attributes: [], required: true, where: { clanId, sessionDate: { [Op.between]: [from.toISOString().slice(0, 10), now.toISOString().slice(0, 10)] } } }] }),
+        models.CommunityPost.count({ where: { scopeType: 'clan', scopeId: clanId, type: 'kudos', toId: menteeId, createdAt: range } }),
+      ]);
+      const days = [...new Set(logs.map(l => l.dateKey))];
+      let streak = 0;
+      let day = new Date(now.toISOString().slice(0, 10));
+      if (!days.includes(day.toISOString().slice(0, 10))) day.setUTCDate(day.getUTCDate() - 1);
+      while (days.includes(day.toISOString().slice(0, 10))) { streak++; day.setUTCDate(day.getUTCDate() - 1); }
+      mentees.push({ id: menteeId, name: `${member.user.firstName} ${member.user.lastName}`, joinedAt: member.joinedAt, from,
+        tasksAssigned: assigned, tasksCompleted: completed, blockersRaised: raised, blockersResolved: resolved, dailyLogs: logs.length, streak, kudos,
+        attendance: { present: attendance.filter(a => a.attendance === 'present').length, absent: attendance.filter(a => a.attendance === 'absent').length, excused: attendance.filter(a => a.attendance === 'excused').length } });
+    }
+    return { clanId, period, until: now, mentees };
+  }
+}
+module.exports = new StandingClanService();
