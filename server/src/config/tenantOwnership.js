@@ -1,6 +1,9 @@
 // Explicit ownership inventory. Account identity/authentication and public
 // product catalogs remain global; all learning and workspace operations do not.
 const WORKSPACE_MODELS = {
+  ProgramClosure: 'program_closures',
+  EnrollmentSnapshot: 'enrollment_snapshots',
+  StandingClanRequest: 'standing_clan_requests',
   Skill: 'skills',
   OpenSourceOrg: 'open_source_orgs',
   ProductUpdate: 'product_updates',
