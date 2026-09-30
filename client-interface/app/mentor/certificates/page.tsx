@@ -1,7 +1,7 @@
 'use client';
 
 import { useConfirm } from '@/lib/context/ConfirmContext';
-import { AWARDED_CERTIFICATES, NO_CERTIFICATE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
+import { AWARDED_CERTIFICATES, NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -141,6 +141,7 @@ export default function MentorCertificatesPage() {
 
   const getTierName = (tierId: string) => {
     if (tierId === NO_CERTIFICATE) return 'No certificate';
+    if (tierId === INACTIVE) return 'Inactive (drop enrollment)';
     if (!tierId || typeof tierId !== 'string') return '';
     const activeTemplate = templates.find(t => t.id === activeTemplateId);
     const match = activeTemplate?.criteria?.find(c => c.id === tierId);
@@ -389,7 +390,7 @@ export default function MentorCertificatesPage() {
           const autoSelected = new Set<string>();
 
           activeList.forEach(m => {
-            const defTier = m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : (criteria.some(c => c.id === m.assignedTier) ? m.assignedTier! : '');
+            const defTier = m.assignedDecision === 'inactive' ? INACTIVE : m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : (criteria.some(c => c.id === m.assignedTier) ? m.assignedTier! : '');
             initialTiers[m.id] = defTier;
 
             const matchPercent = m.tierMatches?.[defTier] ?? 0;
@@ -479,7 +480,7 @@ export default function MentorCertificatesPage() {
     if (badgeFilter !== 'all') {
       result = result.filter((m: any) => {
         const assignedTier = getEffectiveTier(m);
-        return badgeFilter === AWARDED_CERTIFICATES ? Boolean(assignedTier && assignedTier !== NO_CERTIFICATE) : assignedTier === badgeFilter;
+        return badgeFilter === AWARDED_CERTIFICATES ? Boolean(assignedTier && assignedTier !== NO_CERTIFICATE && assignedTier !== INACTIVE) : assignedTier === badgeFilter;
       });
     }
 
@@ -765,12 +766,12 @@ export default function MentorCertificatesPage() {
       return;
     }
 
-    if (recipients.some(r => r.tier === NO_CERTIFICATE && reviewRows?.[r.menteeId]?.decision !== 'no_certificate')) {
-      toast.error('Verify your No certificate decisions before issuing.');
+    if (recipients.some(r => (r.tier === NO_CERTIFICATE || r.tier === INACTIVE) && !['no_certificate', 'inactive'].includes(reviewRows?.[r.menteeId]?.decision || ''))) {
+      toast.error('Verify your No certificate / Inactive decisions before issuing.');
       return;
     }
-    const excludedCount = recipients.filter(r => reviewRows?.[r.menteeId]?.decision === 'no_certificate').length;
-    if (excludedCount && !(await confirm({ title: 'Exclude recipients with no certificate?', description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.` }))) return;
+    const excludedCount = recipients.filter(r => ['no_certificate', 'inactive'].includes(reviewRows?.[r.menteeId]?.decision || '')).length;
+    if (excludedCount && !(await confirm({ title: 'Exclude recipients without a certificate?', description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.` }))) return;
     const duplicateInstances = recipients.filter(r => {
       const m = activeMentees.find(item => item.id === r.menteeId);
       return m && m.issuedTiers && m.issuedTiers.includes(r.tier);

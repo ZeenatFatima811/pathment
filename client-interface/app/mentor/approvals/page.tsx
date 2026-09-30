@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, isHistoricalMentorScope } from '@/lib/context/ClanContext';
 import { toast } from 'sonner';
 import {
   ClipboardCheck, CheckCircle2, Clock, Loader2, ChevronRight, CalendarClock, Check, X,
@@ -47,7 +47,12 @@ type Tab = 'review' | 'changes' | 'extensions' | 'reviewed';
 export default function MentorApprovals() {
   const { queue, changesRequested, reviewed, hiddenByClan, loading, error, refetch, bulkReview, handleExtension } = useMentorApprovals();
   const { clans, activeClanId, setActiveClanId } = useClan();
-  const activeClanName = clans.find((c) => c.id === activeClanId)?.name ?? null;
+  const activeClan = clans.find((c) => c.id === activeClanId) ?? null;
+  const activeClanName = activeClan?.name ?? null;
+  const historical = isHistoricalMentorScope(clans, activeClanId);
+  // When All clans is selected, disable writes that need a concrete writable clan.
+  const writesLocked = activeClanId === ALL_CLANS || historical;
+  const HISTORICAL_TITLE = 'Completed programs are read-only';
   const [tab, setTab] = useState<Tab>('review');
   // Task-type filter, shared across every tab (assignment / quiz / interview / …).
   const [typeFilter, setTypeFilter] = useState('all');
@@ -361,10 +366,11 @@ export default function MentorApprovals() {
         </div>
         {tab === 'review' && (
           <div className="flex flex-wrap gap-2">
-          {filteredReview.length > 0 && <button onClick={() => setReviewing(filteredReview[0])} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700"><ChevronRight className="h-4 w-4" />Review next</button>}
+          {filteredReview.length > 0 && <button onClick={() => setReviewing(filteredReview[0])} disabled={writesLocked} title={writesLocked ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"><ChevronRight className="h-4 w-4" />Review next</button>}
           <button
             onClick={() => setBulkOpen(true)}
-            disabled={selected.size === 0}
+            disabled={selected.size === 0 || writesLocked}
+            title={writesLocked ? HISTORICAL_TITLE : undefined}
             className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-brand-700 hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
           >
             <ClipboardCheck className="w-4 h-4" />
@@ -851,14 +857,16 @@ export default function MentorApprovals() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <button
                         onClick={() => decideExtension(item, false)}
-                        disabled={busy}
+                        disabled={busy || writesLocked}
+                        title={writesLocked ? HISTORICAL_TITLE : undefined}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 hover:border-red-300 hover:text-red-700 disabled:opacity-50"
                       >
                         <X className="w-4 h-4" /> Decline
                       </button>
                       <button
                         onClick={() => decideExtension(item, true)}
-                        disabled={busy}
+                        disabled={busy || writesLocked}
+                        title={writesLocked ? HISTORICAL_TITLE : undefined}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                       >
                         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Approve
@@ -879,6 +887,7 @@ export default function MentorApprovals() {
           taskId={reviewing.taskId}
           onClose={() => setReviewing(null)}
           onFinalized={() => { setSelected(new Set()); refetch(); }}
+          readOnly={writesLocked}
         />
       )}
 
@@ -887,12 +896,14 @@ export default function MentorApprovals() {
           taskId={reviewing.taskId}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
+          readOnly={writesLocked}
         />
       )}
 
       {reviewing && reviewing.type !== 'interview' && reviewing.type !== 'quiz' && (
         <ReviewDrawer
           item={reviewing}
+          readOnly={writesLocked}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
         />
@@ -908,6 +919,7 @@ export default function MentorApprovals() {
           onClose={() => setBulkOpen(false)}
           onReviewed={() => {}}
           onSubmit={runBulkReview}
+          readOnly={writesLocked}
         />
       )}
     </div>
