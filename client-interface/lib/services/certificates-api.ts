@@ -200,6 +200,8 @@ export interface CertificateVerification {
   overridden: boolean;
   overrideReason: string | null;
   status: 'pending' | 'verified';
+  /** An admin has queried this grade and the mentor has not answered yet. */
+  hasOpenQuestion?: boolean;
   /**
    * How far the review has got. `status` cannot distinguish a mentor's check
    * from an admin's approval — both write 'verified' — so this carries the
@@ -209,6 +211,32 @@ export interface CertificateVerification {
   stage?: ReviewStage;
   verifiedAt: string | null;
   verifiedBy: string | null;
+}
+
+/**
+ * An admin asking a mentor to explain a grade, and the mentor's answer.
+ *
+ * Not a review stage: the grade is untouched while this is open. An admin who
+ * disagreed previously had only "accept" or "overrule", and overruling throws
+ * away the mentor's reasoning along with their decision.
+ */
+export interface CertificateReviewQuestion {
+  id: string;
+  templateId: string;
+  menteeId: string;
+  menteeName: string | null;
+  clanId: string | null;
+  clanName: string | null;
+  question: string;
+  askedBy: string | null;
+  askedAt: string;
+  /** The mentor whose decision is in question. */
+  addressedTo: string | null;
+  addressedToName: string | null;
+  answer: string | null;
+  answeredBy: string | null;
+  answeredAt: string | null;
+  status: 'open' | 'answered' | 'withdrawn';
 }
 
 /** A certificate that went out with no signed-off grade behind it. */
@@ -277,6 +305,8 @@ export interface VerificationSummary {
   mentorVerified?: number;
   /** Approved by an admin — the step that releases anything. */
   adminApproved?: number;
+  /** Queried by an admin, awaiting the mentor's answer. */
+  questioned?: number;
   /** Clans the admin has released for issuing. */
   approvedClans: number;
   /** Verified but not yet released — waiting on the admin. */
@@ -628,6 +658,28 @@ export const certificatesApi = {
    * destroys every certificate the template issued — no use when most of them
    * were signed off correctly.
    */
+  /** Questions on a template — optionally one mentee's thread, or open only. */
+  listReviewQuestions: (templateId: string, params: { menteeId?: string; openOnly?: boolean } = {}) =>
+    apiClient.get<{ success: boolean; data: { questions: CertificateReviewQuestion[]; count: number } }>(
+      `/certificates/templates/${templateId}/questions`, { params }),
+
+  /** Ask the mentor why they gave this grade. Only valid on a mentor's decision. */
+  askMentorAboutGrade: (templateId: string, menteeId: string, question: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { question: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/question`, { question }),
+
+  answerReviewQuestion: (questionId: string, answer: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { question: CertificateReviewQuestion } }>(
+      `/certificates/questions/${questionId}/answer`, { answer }),
+
+  withdrawReviewQuestion: (questionId: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/certificates/questions/${questionId}`),
+
+  /** Chase one mentee's mentors instead of every unfinished clan. */
+  notifyMentorsForMentee: (templateId: string, menteeId: string, note?: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { notified: number; clanName: string | null } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/notify-mentor`, { note }),
+
   revokeUnreviewed: (id: string) =>
     apiClient.delete<{ success: boolean; message: string; data: { revoked: number } }>(
       `/certificates/templates/${id}/unreviewed-issued`),

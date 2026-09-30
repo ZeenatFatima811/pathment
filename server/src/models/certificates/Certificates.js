@@ -127,6 +127,55 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
+  /**
+   * CertificateReviewQuestion — the admin asking a mentor to explain a grade.
+   *
+   * An admin who disagrees with a mentor could only accept the grade or
+   * overrule it, and overruling discards both the mentor's judgement and the
+   * reason behind it. Often the mentor simply knows something the record does
+   * not. This puts the question on the record and the answer next to it.
+   *
+   * It is NOT a stage. The grade does not move while a question is open — a
+   * questioned row is still `mentor_verified`, and folding this into `stage`
+   * would mean answering had to guess which stage to restore.
+   */
+  const CertificateReviewQuestion = sequelize.define('CertificateReviewQuestion', {
+    id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+    organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
+    templateId: { type: DataTypes.UUID, allowNull: false, field: 'template_id' },
+    menteeId: { type: DataTypes.UUID, allowNull: false, field: 'mentee_id' },
+    clanId: { type: DataTypes.UUID, field: 'clan_id' },
+    askedBy: { type: DataTypes.UUID, allowNull: false, field: 'asked_by' },
+    askedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'asked_at' },
+    question: { type: DataTypes.TEXT, allowNull: false },
+    /** The mentor whose decision is in question — who is asked, and notified. */
+    addressedTo: { type: DataTypes.UUID, field: 'addressed_to' },
+    answeredBy: { type: DataTypes.UUID, field: 'answered_by' },
+    answeredAt: { type: DataTypes.DATE, field: 'answered_at' },
+    answer: { type: DataTypes.TEXT },
+    status: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'open',
+      allowNull: false,
+      validate: { isIn: [['open', 'answered', 'withdrawn']] }
+    }
+  }, { tableName: 'certificate_review_questions', underscored: true });
+
+  CertificateReviewQuestion.associate = function (models) {
+    if (models.CertificateTemplate) {
+      CertificateReviewQuestion.belongsTo(models.CertificateTemplate, { foreignKey: 'templateId', as: 'template' });
+    }
+    if (models.User) {
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'menteeId', as: 'mentee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'askedBy', as: 'asker' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'addressedTo', as: 'addressee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'answeredBy', as: 'answerer' });
+    }
+    if (models.Clan) {
+      CertificateReviewQuestion.belongsTo(models.Clan, { foreignKey: 'clanId', as: 'clan' });
+    }
+  };
+
   // 4. CertificateClanApproval — the admin releasing a clan for issuing.
   //
   // Verified and approved are different facts. "My mentors have finished
@@ -158,5 +207,5 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
-  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval];
+  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval, CertificateReviewQuestion];
 };

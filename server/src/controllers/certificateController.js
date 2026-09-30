@@ -225,6 +225,44 @@ const revokeUnreviewed = catchAsync(async (req, res) => {
   ));
 });
 
+// ── Questioning a mentor's grade ────────────────────────────────────────────
+
+const askMentor = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.askMentor(
+    req.params.id, req.params.menteeId, req.body?.question, req.user
+  );
+  res.status(201).json(successResponse('Question sent to the mentor', { question }));
+});
+
+const answerQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.answerQuestion(
+    req.params.questionId, req.body?.answer, req.user
+  );
+  res.status(200).json(successResponse('Answer sent', { question }));
+});
+
+const withdrawQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.withdrawQuestion(req.params.questionId, req.user);
+  res.status(200).json(successResponse('Question withdrawn', { question }));
+});
+
+const listQuestions = catchAsync(async (req, res) => {
+  const questions = await certificateVerificationService.listQuestions(req.params.id, {
+    menteeId: req.query.menteeId || null,
+    openOnly: String(req.query.openOnly || '') === 'true'
+  });
+  res.status(200).json(successResponse('Questions retrieved', { questions, count: questions.length }));
+});
+
+const notifyMentorsForMentee = catchAsync(async (req, res) => {
+  const result = await certificateVerificationService.notifyMentorsForMentee(
+    req.params.id, req.params.menteeId, { note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    `Notified ${result.notified} mentor(s) in ${result.clanName || 'the clan'}`, result
+  ));
+});
+
 module.exports = {
   createTemplate,
   listTemplates,
@@ -254,5 +292,10 @@ module.exports = {
   approveClan,
   revokeClanApproval,
   unreviewedIssued,
-  revokeUnreviewed
+  revokeUnreviewed,
+  askMentor,
+  answerQuestion,
+  withdrawQuestion,
+  listQuestions,
+  notifyMentorsForMentee
 };

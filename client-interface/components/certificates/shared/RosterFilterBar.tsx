@@ -15,6 +15,9 @@ export type ReviewFilter =
   // mentor sign-offs still waiting on them — that was impossible to filter for.
   | 'mentor_verified'
   | 'admin_approved'
+  // Not a stage — the grade does not move while a question is open. It is its
+  // own fact, and the admin needs to find these.
+  | 'questioned'
   | 'verified'
   | 'changed'
   | 'sendable';
@@ -127,6 +130,7 @@ export function RosterFilterBar({
               { value: 'pending',         label: 'Awaiting mentor' },
               { value: 'mentor_verified', label: 'Mentor verified — waiting on an admin' },
               { value: 'admin_approved',  label: 'Approved by an admin' },
+              { value: 'questioned',      label: 'Questioned — awaiting the mentor' },
               { value: 'verified',        label: 'Signed off — either' },
               { value: 'changed',         label: 'Changed by a mentor' },
               { value: 'sendable',        label: 'Approved by admin — cleared to send' },

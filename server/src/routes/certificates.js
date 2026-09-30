@@ -218,6 +218,48 @@ router.delete(
   certificateController.revokeUnreviewed
 );
 
+// Asking a mentor to explain a grade, and their answer.
+//
+// The ask is admin-only; the answer is the mentor's, so it is authorised inside
+// the service against the person the question was addressed to rather than by
+// role here — a lead covering for someone who has left must still be able to
+// close it.
+router.get(
+  '/templates/:id/questions',
+  authenticate,
+  authorize(['admin', 'mentor']),
+  certificateController.listQuestions
+);
+
+router.post(
+  '/templates/:id/verifications/:menteeId/question',
+  authenticate,
+  authorize(['admin']),
+  certificateController.askMentor
+);
+
+router.post(
+  '/questions/:questionId/answer',
+  authenticate,
+  authorize(['admin', 'mentor']),
+  certificateController.answerQuestion
+);
+
+router.delete(
+  '/questions/:questionId',
+  authenticate,
+  authorize(['admin']),
+  certificateController.withdrawQuestion
+);
+
+// Chase one mentee's mentors, rather than every unfinished clan.
+router.post(
+  '/templates/:id/verifications/:menteeId/notify-mentor',
+  authenticate,
+  authorize(['admin']),
+  certificateController.notifyMentorsForMentee
+);
+
 // Re-open / re-notify the round, optionally moving the deadline.
 router.post(
   '/templates/:id/verifications-remind',

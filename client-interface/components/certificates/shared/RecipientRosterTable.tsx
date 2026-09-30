@@ -3,7 +3,7 @@
 import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { NO_CERTIFICATE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
 import React from 'react';
-import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock } from 'lucide-react';
+import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock, MessageCircleQuestion } from 'lucide-react';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
 import { TierCriteria } from '@/components/admin/certificates/certificate-constants';
 
@@ -25,6 +25,10 @@ export interface RosterReviewState {
   overrideReason: string | null;
   verifiedBy: string | null;
   verifiedAt?: string | null;
+  /** How far the review got — a mentor's check or an admin's approval. */
+  stage?: string | null;
+  /** An admin has queried this grade and the mentor has not answered yet. */
+  hasOpenQuestion?: boolean;
 }
 
 export interface RecipientRosterTableProps {
@@ -300,6 +304,16 @@ function ReviewNote({
       return (
         <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
           <Edit3 className="w-2.5 h-2.5" /> Changed — verify to save
+        </span>
+      );
+    }
+    if (review.hasOpenQuestion) {
+      // The grade stands; what is outstanding is the mentor's explanation. Said
+      // on the row so an admin can see at a glance which ones they have queried.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · question sent
         </span>
       );
     }
