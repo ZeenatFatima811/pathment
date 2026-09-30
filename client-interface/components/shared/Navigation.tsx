@@ -56,6 +56,7 @@ export default function Navigation({ role }: NavigationProps) {
   const { clans, activeClanId, setActiveClanId, menteeClans, menteeActiveClanId, setMenteeActiveClanId } = useClan();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [clanDropdownOpen, setClanDropdownOpen] = useState(false);
 
   const { links, pinned, isEditing, toggleEdit, togglePin, moveUp, moveDown, reset, recordUsage, adaptive, toggleAdaptive } = useNavPreferences(role);
   const { can, canAny, canAccessAdmin, loading: permsLoading } = usePermissions();
@@ -161,38 +162,111 @@ export default function Navigation({ role }: NavigationProps) {
     );
   };
 
-  // ── Clan scope (multi-clan mentors) ───────────────────────────────────────
-  const renderClanScope = () => {
-    const visibleClans = role === 'mentor' ? clans : role === 'mentee' ? menteeClans : [];
-    if (!visibleClans.length) return null;
+  // ── Clan scope (multi-clan mentors/mentees) ─────────────────────────────────
+const renderClanScope = () => {
+  const visibleClans =
+    role === 'mentor'
+      ? clans
+      : role === 'mentee'
+        ? menteeClans
+        : [];
 
-    const selectedClanId = role === 'mentor' ? activeClanId : menteeActiveClanId || menteeClans[0]?.id;
-    const selectClan = role === 'mentor' ? setActiveClanId : setMenteeActiveClanId;
+  if (!visibleClans.length) return null;
 
-    return (
-      <div className="space-y-1" aria-label="Your clans">
-        {visibleClans.map((clan) => {
-          const selected = selectedClanId === clan.id;
-          return (
-            <button
-              key={clan.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => selectClan(clan.id)}
-              className={`flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors ${selected ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100'}`}
-            >
-              <Avatar name={clan.name} src={clan.avatarUrl} size="sm" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{clan.name}</span>
-                <span className="block truncate text-xs text-slate-500">{CLAN_ROLE_LABELS[clan.role]}</span>
-              </span>
-              {selected && <Check className="h-4 w-4 shrink-0 text-brand-600" />}
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
+  const selectedClanId =
+    role === 'mentor'
+      ? activeClanId
+      : menteeActiveClanId || visibleClans[0]?.id;
+
+  const selectedClan = visibleClans.find(
+    (clan) => clan.id === selectedClanId
+  );
+
+  const selectClan =
+    role === 'mentor'
+      ? setActiveClanId
+      : setMenteeActiveClanId;
+
+  return (
+    <div className="relative" aria-label="Your clans">
+      {/* Selected clan */}
+      <button
+        type="button"
+        onClick={() => setClanDropdownOpen((prev) => !prev)}
+        className="flex w-full min-w-0 items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-left hover:bg-slate-50"
+      >
+        <Avatar
+          name={selectedClan?.name || ''}
+          src={selectedClan?.avatarUrl}
+          size="sm"
+        />
+
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-slate-700">
+            {selectedClan?.name}
+          </span>
+
+          <span className="block truncate text-xs text-slate-500">
+            {selectedClan
+              ? CLAN_ROLE_LABELS[selectedClan.role]
+              : ''}
+          </span>
+        </span>
+
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
+            clanDropdownOpen ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+
+      {/* Dropdown */}
+      {clanDropdownOpen && (
+        <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+          {visibleClans.map((clan) => {
+            const selected = selectedClanId === clan.id;
+
+            return (
+              <button
+                key={clan.id}
+                type="button"
+                onClick={() => {
+                  selectClan(clan.id);
+                  setClanDropdownOpen(false);
+                }}
+                className={`flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                  selected
+                    ? 'bg-brand-50 text-brand-700'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Avatar
+                  name={clan.name}
+                  src={clan.avatarUrl}
+                  size="sm"
+                />
+
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    {clan.name}
+                  </span>
+
+                  <span className="block truncate text-xs text-slate-500">
+                    {CLAN_ROLE_LABELS[clan.role]}
+                  </span>
+                </span>
+
+                {selected && (
+                  <Check className="h-4 w-4 shrink-0 text-brand-600" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
   // ── Shared render helpers ─────────────────────────────────────────────────
 
