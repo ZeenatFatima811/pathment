@@ -13,6 +13,8 @@ import { SelectMenu } from '@/components/shared/SelectMenu';
 import { reviewNavigationAction } from '@/lib/utils/review-navigation-keys';
 import { reviewActionLabels } from '@/lib/utils/certificate-review-stage';
 import { usePermissions } from '@/lib/hooks/usePermissions';
+import { usePathname } from 'next/navigation';
+import { roleFromPathname } from '@/lib/utils/notification-audience';
 import { certificatesApi, type MenteeEvidence, type EvidenceRoadmap, type CertificateReviewQuestion } from '@/lib/services/certificates-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
@@ -56,11 +58,23 @@ interface MenteeEvidenceDrawerProps {
 export function MenteeEvidenceDrawer({
   templateId, menteeId, onClose, onTierChange, onDecided, canDecide = true, initialSelection, navigation,
 }: MenteeEvidenceDrawerProps) {
-  // Signing off is the mentor's step; approving is the admin's. Read from the
-  // same check the server uses to set the stage, so the button never promises
-  // something different from what gets recorded.
+  /**
+   * Signing off is the mentor's step; approving is the admin's — so the verb
+   * follows the PORTAL, not the standing.
+   *
+   * `canAccessAdmin` answers what the person holds and stays true everywhere on
+   * purpose: it is cached per user and drives the admin-area guard, so
+   * narrowing it by portal would lock an admin out of their own admin area.
+   * That makes it the wrong input for a label. Somebody who is both an admin
+   * and a mentor, reviewing their own clan on a mentor screen, was told they
+   * were approving — which is not what the server records for them there.
+   *
+   * The pathname already says which portal this is, for free.
+   */
   const { canAccessAdmin } = usePermissions();
-  const actionLabels = reviewActionLabels(canAccessAdmin);
+  const pathname = usePathname();
+  const actingAsAdmin = canAccessAdmin && roleFromPathname(pathname ?? '') === 'admin';
+  const actionLabels = reviewActionLabels(actingAsAdmin);
   const [evidence, setEvidence] = useState<MenteeEvidence | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,15 +185,15 @@ export function MenteeEvidenceDrawer({
   const decidedByMentor = Boolean(
     v?.status === 'verified' && v?.stage === 'mentor_verified'
   );
-  const canAsk = canAccessAdmin && decidedByMentor && !openQuestion;
-  const canAnswer = Boolean(openQuestion) && !canAccessAdmin;
+  const canAsk = actingAsAdmin && decidedByMentor && !openQuestion;
+  const canAnswer = Boolean(openQuestion) && !actingAsAdmin;
 
   /**
    * An approved grade is the admin's call, so the mentor asks instead of
    * editing. Swapping the form rather than letting them fill it in and be
    * refused is the whole difference between a lock and a dead end.
    */
-  const lockedForMentor = Boolean(!canAccessAdmin && v?.stage === 'admin_approved');
+  const lockedForMentor = Boolean(!actingAsAdmin && v?.stage === 'admin_approved');
   const openChangeRequest = questions.find(q => q.kind === 'change_request' && q.status === 'open') ?? null;
 
   const ask = async () => {
@@ -596,7 +610,7 @@ export function MenteeEvidenceDrawer({
                   </div>
                 ))}
 
-                {canAccessAdmin && openChangeRequest && (
+                {actingAsAdmin && openChangeRequest && (
                   <div className="space-y-2 rounded-xl border border-brand-500/30 bg-brand-500/5 p-3">
                     <p className="text-[11px] font-semibold text-foreground">Decide this request</p>
                     <textarea
@@ -679,7 +693,7 @@ export function MenteeEvidenceDrawer({
                   </div>
                 )}
 
-                {canAccessAdmin && openQuestion && (
+                {actingAsAdmin && openQuestion && (
                   <button
                     type="button"
                     onClick={withdraw}
@@ -694,7 +708,7 @@ export function MenteeEvidenceDrawer({
           )}
 
           {/* ── Nudge this one mentee's mentors ─────────────────────────── */}
-          {canAccessAdmin && v?.status !== 'verified' && (
+          {actingAsAdmin && v?.status !== 'verified' && (
             <section className="space-y-2.5">
               <SectionLabel>Waiting on the mentor</SectionLabel>
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-muted/20 p-4">

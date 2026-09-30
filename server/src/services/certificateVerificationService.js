@@ -311,7 +311,11 @@ class CertificateVerificationService {
       // it still showing as theirs. A mentor re-confirming the same grade leaves
       // the approval standing; a mentor who actually CHANGES it drops the row
       // back, because the admin approved the old grade, not the new one.
-      if (await authzService.hasAdminAccess(user)) {
+      // `actsAsAdmin`, not `hasAdminAccess`: the stage records which hat was
+      // worn. An admin signing off on a MENTOR screen is doing a mentor's
+      // review — the button there says "sign off", and the record must agree
+      // with the button.
+      if (await authzService.actsAsAdmin(user)) {
         row.stage = 'admin_approved';
       } else if (row.stage === 'admin_approved' && !changed) {
         row.stage = 'admin_approved';

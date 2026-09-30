@@ -93,6 +93,41 @@ describe('a user who is both an admin and a mentor', () => {
     });
   });
 
+  describe('the recorded stage follows the hat, not the standing', () => {
+    /**
+     * The mentor screen's button says "sign off"; the admin screen's says
+     * "approve". Whatever the record says has to agree with whichever button
+     * the person actually pressed.
+     */
+    it('records mentor_verified when an admin signs off from the mentor portal', async () => {
+      const certificateService = require('../../src/services/certificateService');
+      const verification = require('../../src/services/certificateVerificationService');
+
+      const template = await inPortal('admin', () => certificateService.createTemplate({
+        name: 'Fellowship', config: [],
+        criteria: [{ id: 'bronze', name: 'Bronze', artworkUrl: 'https://cdn/b.png', layout: [] }],
+        programId: program.id
+      }, person.id));
+      await template.update({
+        aiEvaluation: {
+          results: [{ mentee_id: myMentee.id, certificate_tier: 'bronze', match_score: 60 }],
+          ranAt: new Date().toISOString()
+        }
+      });
+      await inPortal('admin', () => verification.sendToClans(template.id, {}, person));
+
+      await inPortal('mentor', () => verification.verify(template.id, myMentee.id, {}, person));
+      const asMentor = await models.CertificateVerification.findOne({
+        where: { templateId: template.id, menteeId: myMentee.id }
+      });
+      expect(asMentor.stage).toBe('mentor_verified');
+
+      await inPortal('admin', () => verification.verify(template.id, myMentee.id, {}, person));
+      await asMentor.reload();
+      expect(asMentor.stage).toBe('admin_approved');
+    });
+  });
+
   describe('no lockout', () => {
     /**
      * The switcher and the admin-area guard both hang off standing, so they
