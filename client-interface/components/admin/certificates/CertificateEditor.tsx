@@ -1,7 +1,7 @@
 'use client';
 
 import { useConfirm } from '@/lib/context/ConfirmContext';
-import { NO_CERTIFICATE, reviewSelection, aiSelection } from '@/lib/utils/certificate-decision';
+import { NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection } from '@/lib/utils/certificate-decision';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -188,6 +188,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
 
   const getTierName = (tierId: string) => {
     if (tierId === NO_CERTIFICATE) return 'No certificate';
+    if (tierId === INACTIVE) return 'Inactive (drop enrollment)';
     if (!tierId || typeof tierId !== 'string') return '';
     const match = criteria.find(c => c.id === tierId);
     return match ? match.name : tierId.charAt(0).toUpperCase() + tierId.slice(1);
@@ -405,7 +406,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
           const autoSelected = new Set<string>();
 
           activeList.forEach(m => {
-            const defTier = m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : m.assignedTier ?? aiSelection(aiEvalMap[m.id]);
+            const defTier = m.assignedDecision === 'inactive' ? INACTIVE : m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : m.assignedTier ?? aiSelection(aiEvalMap[m.id]);
             initialTiers[m.id] = defTier;
             autoSelected.add(m.id);
           });
@@ -710,12 +711,12 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       return;
     }
 
-    if (recipients.some(r => r.tier === NO_CERTIFICATE && reviewRows[r.menteeId]?.decision !== 'no_certificate')) {
-      toast.error('Save No certificate decisions in the evidence drawer before issuing.');
+    if (recipients.some(r => (r.tier === NO_CERTIFICATE || r.tier === INACTIVE) && !['no_certificate', 'inactive'].includes(reviewRows[r.menteeId]?.decision || ''))) {
+      toast.error('Save No certificate / Inactive decisions in the evidence drawer before issuing.');
       return;
     }
-    const excludedCount = recipients.filter(r => reviewRows[r.menteeId]?.decision === 'no_certificate').length;
-    if (excludedCount && !(await confirm({ title: 'Confirm certificate recipients', description: `${recipients.length - excludedCount} selected for certificates; ${excludedCount} marked No certificate will be excluded. Already-issued certificates are skipped automatically.` }))) return;
+    const excludedCount = recipients.filter(r => ['no_certificate', 'inactive'].includes(reviewRows[r.menteeId]?.decision || '')).length;
+    if (excludedCount && !(await confirm({ title: 'Confirm certificate recipients', description: `${recipients.length - excludedCount} selected for certificates; ${excludedCount} marked No certificate or Inactive will be excluded. Already-issued certificates are skipped automatically.` }))) return;
     const allMentees: any[] = [];
     const seenIds = new Set<string>();
     Object.keys(qualifiedData).forEach(key => {

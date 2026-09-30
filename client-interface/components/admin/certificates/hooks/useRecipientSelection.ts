@@ -1,6 +1,6 @@
 'use client';
 
-import { AWARDED_CERTIFICATES, NO_CERTIFICATE, aiSelection } from '@/lib/utils/certificate-decision';
+import { AWARDED_CERTIFICATES, NO_CERTIFICATE, INACTIVE, aiSelection } from '@/lib/utils/certificate-decision';
 import { useState, useMemo, useCallback } from 'react';
 import { toast } from 'sonner';
 import { TierCriteria } from '../certificate-constants';
@@ -71,6 +71,7 @@ export function useRecipientSelection({
     if (aiSelection(aiResults?.[id])) return aiSelection(aiResults?.[id]);
 
     const m = typeof mOrId === 'object' ? mOrId : activeList.find((x: any) => x.id === id);
+    if (m?.assignedDecision === 'inactive') return INACTIVE;
     if (m?.assignedDecision === 'no_certificate') return NO_CERTIFICATE;
     if (m?.assignedTier) return m.assignedTier;
 

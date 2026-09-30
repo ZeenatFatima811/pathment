@@ -1,6 +1,6 @@
 'use client';
 
-import { NO_CERTIFICATE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
+import { NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -114,7 +114,9 @@ export function MenteeEvidenceDrawer({
   }, [menteeId, navigation]);
 
   const tierName = (id: string | null | undefined) =>
-    id === NO_CERTIFICATE ? 'No certificate' : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
+    id === NO_CERTIFICATE ? 'No certificate'
+      : id === INACTIVE ? 'Inactive (drop enrollment)'
+      : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
 
   const v = evidence?.verification ?? null;
   const m = evidence?.metrics;
@@ -123,7 +125,7 @@ export function MenteeEvidenceDrawer({
   /** A change away from the AI's pick needs a reason — the server insists too. */
   const aiTier = v?.aiDecision === 'no_certificate' ? NO_CERTIFICATE : v?.aiTier ?? aiSelection(evidence?.ai);
   const isChange = Boolean(draftTier && draftTier !== aiTier);
-  const needsReason = isChange || draftTier === NO_CERTIFICATE || (v?.status === 'verified' && draftTier !== reviewSelection(v));
+  const needsReason = isChange || draftTier === NO_CERTIFICATE || draftTier === INACTIVE || (v?.status === 'verified' && draftTier !== reviewSelection(v));
   const reasonMissing = needsReason && !reason.trim();
 
   const save = async () => {
@@ -131,7 +133,7 @@ export function MenteeEvidenceDrawer({
     // With no review round there is nothing to record a decision against, so
     // the change just moves the roster's tier and is signed off later.
     if (!v) {
-      if (draftTier === NO_CERTIFICATE) { toast.error('An admin must open the review round before this decision can be recorded.'); return; }
+      if (draftTier === NO_CERTIFICATE || draftTier === INACTIVE) { toast.error('An admin must open the review round before this decision can be recorded.'); return; }
       onTierChange?.(menteeId, draftTier);
       toast.success('Badge updated for this roster');
       onClose();
@@ -364,7 +366,7 @@ export function MenteeEvidenceDrawer({
                 <SelectMenu
                   value={draftTier}
                   onChange={setDraftTier}
-                  options={[{ value: NO_CERTIFICATE, label: 'No certificate' }, ...evidence.criteria.map((c) => ({ value: c.id, label: c.name }))]}
+                  options={[{ value: NO_CERTIFICATE, label: 'No certificate' }, { value: INACTIVE, label: 'Inactive (drop enrollment)' }, ...evidence.criteria.map((c) => ({ value: c.id, label: c.name }))]}
                   placeholder="Pick a badge"
                   ariaLabel="Badge"
                   className="w-full"

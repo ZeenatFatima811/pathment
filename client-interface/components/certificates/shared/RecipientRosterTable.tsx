@@ -1,6 +1,6 @@
 'use client';
 
-import { NO_CERTIFICATE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
+import { NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
 import React from 'react';
 import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock } from 'lucide-react';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
@@ -120,7 +120,7 @@ export function RecipientRosterTable({
         {filtered.map((m: any) => {
           const rowLocked = locked || Boolean(isRecipientLocked?.(m.id));
           const review = reviewRows?.[m.id];
-          const selectedTier = assignedTiers[m.id] ?? (review ? reviewSelection(review) : m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : m.assignedTier ?? aiSelection(aiEvalMap[m.id]));
+          const selectedTier = assignedTiers[m.id] ?? (review ? reviewSelection(review) : m.assignedDecision === 'inactive' ? INACTIVE : m.assignedDecision === 'no_certificate' ? NO_CERTIFICATE : m.assignedTier ?? aiSelection(aiEvalMap[m.id]));
           const recommendation = review?.aiTier || review?.aiDecision === 'no_certificate'
             ? { certificate_tier: review.aiTier, decision: review.aiDecision, match_score: review.aiMatchScore }
             : aiEvalMap[m.id];
@@ -218,6 +218,7 @@ export function RecipientRosterTable({
                   >
                     <option value="">Select decision</option>
                     <option value={NO_CERTIFICATE}>No certificate</option>
+                    <option value={INACTIVE}>Inactive (drop enrollment)</option>
                     {criteria.map((c: any) => (
                       <option key={c.id} value={c.id} className="text-foreground bg-card font-medium">
                         {c.name}
