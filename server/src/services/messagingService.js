@@ -864,7 +864,8 @@ class MessagingService {
         'sentAt',
         'emailSent',
         'emailSentAt',
-        'createdAt'
+        'createdAt',
+        'organizationId'
       ],
       where: {
         id: notificationId,
