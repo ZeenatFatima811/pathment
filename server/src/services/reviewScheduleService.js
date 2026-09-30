@@ -126,6 +126,8 @@ class ReviewScheduleService {
   // ── materialisation ────────────────────────────────────────────────────────
   async _materialize(schedule, sendInvites) {
     if (!schedule.active) return;
+    const clan = await models.Clan.findByPk(schedule.clanId);
+    if (clan?.kind !== 'standing' && clan?.frozenAt) return;
     const horizon = new Date(Date.now() + HORIZON_DAYS * 86400000);
     const occ = nextOccurrences(schedule, new Date(), 4).filter((o) => o.start <= horizon);
     for (const o of occ) {
@@ -305,6 +307,8 @@ class ReviewScheduleService {
       },
     });
     for (const session of due) {
+      const clan = session.clanId && await models.Clan.findByPk(session.clanId);
+      if (clan?.kind !== 'standing' && clan?.frozenAt) continue;
       const schedule = await models.ReviewSchedule.findByPk(session.reviewScheduleId);
       if (schedule && schedule.active) {
         await this._email(session, schedule, kind).catch((e) => console.error(`[reviewSchedule] ${kind} reminder failed:`, e.message));

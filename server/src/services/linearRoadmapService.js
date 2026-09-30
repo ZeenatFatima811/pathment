@@ -829,13 +829,15 @@ class LinearRoadmapService {
 
     const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: mentorId });
 
-    let enrollment = await this._activeEnrollment(menteeId);
+    const actualClan = resolvedClanId && await models.Clan.findByPk(resolvedClanId);
+    let enrollment = actualClan?.kind === 'standing' ? { id: null }
+      : actualClan ? await models.Enrollment.findOne({ where: { menteeId, programId: actualClan.programId } }) : await this._activeEnrollment(menteeId);
     if (!enrollment) {
       // Self-heal: a clan-placed mentee may not have an enrollment yet. Create
       // one in the roadmap's program rather than failing the assignment.
       if (!roadmap?.programId) throw new ValidationError('Mentee has no enrollment to attach this work to');
       enrollment = await models.Enrollment.create({
-        menteeId, programId: roadmap.programId, status: 'active', enrolledAt: new Date()
+        menteeId, programId: actualClan?.programId || roadmap.programId, status: 'active', enrolledAt: new Date()
       });
     }
 
@@ -992,7 +994,9 @@ class LinearRoadmapService {
   async _startNextRoadmap(menteeId, nextId, prevAssignment, slotId = null) {
     const steps = await this.getSteps(nextId);
     if (!steps.length) return false;
-    const enrollment = await this._activeEnrollment(menteeId);
+    const clan = prevAssignment?.clanId && await models.Clan.findByPk(prevAssignment.clanId);
+    const enrollment = clan?.kind === 'standing' ? { id: null } : prevAssignment?.enrollmentId
+      ? await models.Enrollment.findByPk(prevAssignment.enrollmentId) : await this._activeEnrollment(menteeId);
     const existing = await models.RoadmapProgress.findOne({
       where: { roadmapId: nextId, menteeId, ...(prevAssignment?.clanId ? { clanId: prevAssignment.clanId } : {}) }
     });
@@ -1055,7 +1059,9 @@ class LinearRoadmapService {
     // 1) Reusable roadmap-level links take precedence.
     const links = await models.RoadmapLink.findAll({ where: { fromRoadmapId: completedRoadmapId }, order: [['position', 'ASC']] });
     if (links.length) {
-      const enrollment = await this._activeEnrollment(menteeId);
+      const enrollment = prevAssignment?.clanId
+        ? (prevAssignment.enrollmentId ? await models.Enrollment.findByPk(prevAssignment.enrollmentId) : null)
+        : await this._activeEnrollment(menteeId);
       const autoOn = enrollment ? enrollment.autoAdvanceRoadmaps !== false : true;
       if (links.length === 1 && autoOn) {
         const nextId = links[0].toRoadmapId;

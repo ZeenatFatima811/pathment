@@ -40,6 +40,7 @@ class ProgramService {
     } = programData;
 
     // Validate dates
+    if (status === 'completed') throw new ValidationError('Create the program first, then use the formal close action after its end date');
     if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
       throw new ValidationError('End date must be after start date');
     }
@@ -535,6 +536,7 @@ class ProgramService {
    * Clone program (create from template)
    */
   async cloneProgram(programId, userId, customizations = {}) {
+    if (customizations.status === 'completed') throw new ValidationError('Use program close to finalize results');
     const sourceProgram = await models.Program.findByPk(programId);
 
     if (!sourceProgram) {
@@ -554,9 +556,13 @@ class ProgramService {
       totalReviews: 0,
       publishedAt: null,
       archivedAt: null,
+      closedAt: null,
+      currentClosureId: null,
       createdAt: undefined,
       updatedAt: undefined,
-      ...customizations
+      ...customizations,
+      closedAt: null,
+      currentClosureId: null
     };
 
     const clonedProgram = await models.Program.create(clonedData);

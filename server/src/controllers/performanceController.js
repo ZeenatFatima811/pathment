@@ -63,10 +63,14 @@ exports.clanStanding = catchAsync(async (req, res) => {
  * relative) but only the rank is returned. Nobody needs their peers' parts.
  */
 exports.myPerformance = catchAsync(async (req, res) => {
+  const clanId = await require('../services/menteeClanScope').resolveMenteeClanId(req.user.id, require('../middlewares/portalScope').requestedClanId(req));
   const membership = await models.ClanMembership.findOne({
-    where: { userId: req.user.id, role: 'mentee', status: 'active' },
+    where: { userId: req.user.id, role: 'mentee', status: 'active', ...(clanId ? { clanId } : {}) },
     attributes: ['clanId']
   });
+
+  const clan = clanId && await models.Clan.findByPk(clanId);
+  if (clan?.kind === 'standing') return res.json(successResponse('Standing clan uses activity reports', { kind: 'standing', score: null, rank: null, parts: [], outOf: 0 }));
 
   if (!membership) {
     return res.status(200).json(
@@ -103,7 +107,7 @@ exports.myPerformance = catchAsync(async (req, res) => {
       evidence: me.evidence,
       eligible: me.eligible,
       notRankedBecause: me.notRankedBecause,
-      rank: rank >= 0 ? rank + 1 : null,
+      rank: me.historical ? me.rank : rank >= 0 ? rank + 1 : null,
       outOf: ranked.length,
       weights,
       disabled

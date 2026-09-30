@@ -130,7 +130,7 @@ class SubmissionService {
     });
 
     // Re-engagement: a paused mentee who submits work has come back → resume.
-    require('./mentorshipPauseService').autoResumeIfPaused(task.menteeId, 'submitted work').catch(() => { });
+    require('./mentorshipPauseService').autoResumeIfPaused(task.menteeId, 'submitted work', task.clanId).catch(() => { });
 
     // Assign the next roadmap step NOW (at submission), not at approval — so the
     // mentee has work to do while the mentor reviews. Within-roadmap only;

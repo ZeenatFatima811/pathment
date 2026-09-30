@@ -294,6 +294,7 @@ class CohortService {
   }
 
   async buildMenteeRow(menteeId, preloads = null) {
+    if (preloads?.historical?.[menteeId]) return preloads.historical[menteeId];
     let mentee, tasks, delays, blockers, lastAttendance;
 
     if (preloads) {
@@ -302,7 +303,10 @@ class CohortService {
 
       const allTasks = preloads.tasks[menteeId] || [];
       const enrollment = this.pickPrimaryEnrollment(mentee.enrollments);
-      tasks = enrollment ? allTasks.filter((t) => t.enrollmentId === enrollment.id) : allTasks;
+      // When preloads are already clan/program-scoped, keep every returned task
+      // (including standing work with no enrollment). Otherwise limit to the
+      // primary program enrollment so multi-program mentees do not blend.
+      tasks = preloads.scoped || !enrollment ? allTasks : allTasks.filter((t) => t.enrollmentId === enrollment.id);
 
       delays = preloads.delays[menteeId] || [];
       blockers = preloads.blockers[menteeId] || [];
@@ -346,12 +350,18 @@ class CohortService {
 
     const enrollment = this.pickPrimaryEnrollment(mentee.enrollments);
 
-    const absolute = enrollment ? Math.round(Number(enrollment.overallProgressPercentage) || 0) : 0;
+    const liveTasks = tasks.filter(t => t.status !== 'cancelled');
+    const weight = t => require('../config/scoring').difficultyWeight(t.roadmapTask?.difficulty);
+    const totalWeight = liveTasks.reduce((sum, t) => sum + weight(t), 0);
+    const absolute = preloads?.scoped ? (totalWeight ? Math.round(liveTasks.filter(t => t.status === 'completed').reduce((sum, t) => sum + weight(t), 0) / totalWeight * 100) : 0)
+      : enrollment ? Math.round(Number(enrollment.overallProgressPercentage) || 0) : 0;
     const onTimeRate = this.computeOnTimeRate(tasks);
     const pendingApprovals = tasks.filter((t) => t.status === 'submitted').length;
     const openBlockers = blockers.length;
     const highSeverityBlockers = blockers.filter((b) => b.severity === 'high').length;
-    const lastActivityDate = mentee.menteeProfile?.lastActivityDate || null;
+    const lastActivityDate = preloads?.scoped
+      ? [...tasks.flatMap(t => [t.completedAt, t.submittedAt, t.startedAt]), lastAttendance?.date].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null
+      : mentee.menteeProfile?.lastActivityDate || null;
     const lastActiveDays = daysSince(lastActivityDate);
 
     const week = enrollment?.currentWeek || 0;
@@ -394,7 +404,8 @@ class CohortService {
       risk,
       riskReason,
       signals,
-      avgRating: enrollment ? Number(enrollment.avgTaskRating) || 0 : 0,
+      avgRating: preloads?.scoped ? (() => { const rated = tasks.filter(t => t.finalRating != null); return rated.length ? rated.reduce((s, t) => s + Number(t.finalRating), 0) / rated.length : 0; })() : enrollment ? Number(enrollment.avgTaskRating) || 0 : 0,
+      extensions: delays.filter(d => d.accepted).length,
       lastActive: lastActivityDate ? humanizeDays(lastActiveDays) : 'never',
       lastAttendance, // { status, date } | null — most recent review attendance
       taskCount: tasks.length, // total assigned tasks — 0 = never been given work
@@ -432,7 +443,8 @@ class CohortService {
    * mentee's actual stats - not a fabricated narrative - until the LLM-backed
    * summary feature is wired in.
    */
-  async getMenteeDetail(menteeId) {
+  async getMenteeDetail(menteeId, { clanId = null } = {}) {
+    const scope = await this.workScopeForClan(clanId);
     // Critical path: the mentee record itself. If this fails (or doesn't exist)
     // the profile can't render — fail loudly so the controller returns a 404.
     const [mentee, optional] = await Promise.all([
@@ -440,7 +452,13 @@ class CohortService {
         attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl'],
         include: [
           { model: models.MenteeProfile, as: 'menteeProfile', attributes: ['lastActivityDate', 'currentOccupation', 'personality'] },
-          { model: models.Enrollment, as: 'enrollments', required: false, include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks'] }] }
+          {
+            model: models.Enrollment,
+            as: 'enrollments',
+            required: false,
+            ...(scope.programId ? { where: { programId: scope.programId } } : {}),
+            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt', 'currentClosureId'] }]
+          }
         ]
       }),
       // Enrichment sections are optional — a hiccup in one must not 500 the whole
@@ -448,9 +466,9 @@ class CohortService {
       // Reads are delegated to the owning domain services (SRP/DIP): cohortService
       // assembles the profile, it doesn't know other domains' schemas.
       Promise.allSettled([
-        taskService.listMenteeProfileTasks(menteeId),
-        frictionService.listDelaysFor(menteeId),
-        frictionService.listBlockersWithTask(menteeId),
+        taskService.listMenteeProfileTasks(menteeId, clanId),
+        frictionService.listDelaysFor(menteeId, clanId),
+        frictionService.listBlockersWithTask(menteeId, clanId),
         insightService.getInsightsByMentee(menteeId),
         models.MeetingNote.findAll({
           where: { menteeId },
@@ -504,8 +522,21 @@ class CohortService {
       tasks: { [menteeId]: allTasks },
       delays: { [menteeId]: allDelays },
       blockers: { [menteeId]: openBlockers },
-      attendance: { [menteeId]: lastAttendance }
+      attendance: { [menteeId]: lastAttendance },
+      scoped: Boolean(clanId),
+      historical: {}
     };
+    if (!scope.standing && mentee.enrollments?.length) {
+      const closed = mentee.enrollments.map(e => e.program).filter(p => p?.closedAt && p.currentClosureId);
+      if (closed.length) {
+        const saved = await models.EnrollmentSnapshot.findAll({
+          where: { closureId: { [Op.in]: closed.map(p => p.currentClosureId) }, menteeId }
+        });
+        const enrollment = this.pickPrimaryEnrollment(mentee.enrollments);
+        const snapshot = saved.find(s => s.enrollmentId === enrollment?.id && (!clanId || (s.clanIds || []).includes(clanId)));
+        if (snapshot?.performance?.report) preloads.historical[menteeId] = snapshot.performance.report;
+      }
+    }
 
     const row = await this.buildMenteeRow(menteeId, preloads);
     if (!row) return null;
@@ -794,10 +825,34 @@ class CohortService {
    * the returned object straight into buildMenteeRow(id, preloads). Shared by
    * getCohort AND the admin clan-health / insights views.
    */
-  async preloadMenteeData(menteeIds) {
+  /**
+   * Resolve work scope for mentor reporting. Standing clans use their own tasks;
+   * cohort clans (and the merged "all" view) keep standing work out of program results.
+   */
+  async workScopeForClan(clanId) {
+    if (!clanId) return {};
+    const clan = await models.Clan.findByPk(clanId, { attributes: ['id', 'programId', 'kind'] });
+    if (!clan) return { clanId };
+    if (clan.kind === 'standing') return { clanId, standing: true };
+    return { clanId, programId: clan.programId || null };
+  }
+
+  taskFilterForScope(scope = {}) {
+    if (scope.standing) return { clanId: scope.clanId };
+    return require('./programWorkScope').taskWhere(scope);
+  }
+
+  clanFilterForScope(scope = {}) {
+    if (scope.standing) return { clanId: scope.clanId };
+    return require('./programWorkScope').clanWhere(scope);
+  }
+
+  async preloadMenteeData(menteeIds, scope = {}) {
     const ids = [...new Set(menteeIds)].filter(Boolean);
-    if (!ids.length) return { users: {}, tasks: {}, delays: {}, blockers: {}, attendance: {} };
+    if (!ids.length) return { users: {}, tasks: {}, delays: {}, blockers: {}, attendance: {}, historical: {}, scoped: false };
     const inIds = { [Op.in]: ids };
+    const taskFilter = this.taskFilterForScope(scope);
+    const clanFilter = this.clanFilterForScope(scope);
 
     const [allUsers, allTasks, allDelays, allBlockers] = await Promise.all([
       models.User.findAll({
@@ -809,21 +864,22 @@ class CohortService {
             model: models.Enrollment,
             as: 'enrollments',
             required: false,
-            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks'] }]
+            ...(scope.programId ? { where: { programId: scope.programId } } : {}),
+            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt', 'currentClosureId'] }]
           }
         ]
       }),
       models.AssignedTask.findAll({
-        where: { menteeId: inIds },
-        attributes: ['id', 'status', 'isLate', 'completedAt', 'dueDate', 'menteeId', 'enrollmentId', 'pointsAwarded'],
+        where: { menteeId: inIds, ...taskFilter },
+        attributes: ['id', 'status', 'isLate', 'completedAt', 'submittedAt', 'startedAt', 'finalRating', 'dueDate', 'menteeId', 'enrollmentId', 'pointsAwarded'],
         include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['difficulty', 'type'], required: false }]
       }),
       models.DelayEvent.findAll({
-        where: { menteeId: inIds },
+        where: { menteeId: inIds, ...clanFilter },
         attributes: ['days', 'accepted', 'category', 'menteeId']
       }),
       models.Blocker.findAll({
-        where: { menteeId: inIds, status: 'open' },
+        where: { menteeId: inIds, status: 'open', ...clanFilter },
         attributes: ['id', 'severity', 'menteeId']
       })
     ]);
@@ -833,7 +889,7 @@ class CohortService {
     if (models.CohortReviewEntry && models.CohortReviewSession) {
       const entries = await models.CohortReviewEntry.findAll({
         where: { menteeId: inIds, attendance: { [Op.ne]: null } },
-        include: [{ model: models.CohortReviewSession, as: 'session', attributes: ['sessionDate'], required: true }],
+        include: [{ model: models.CohortReviewSession, as: 'session', attributes: ['sessionDate'], required: true, where: clanFilter }],
         order: [['menteeId', 'ASC'], [{ model: models.CohortReviewSession, as: 'session' }, 'session_date', 'DESC']]
       });
       for (const e of entries) {
@@ -848,7 +904,19 @@ class CohortService {
       return acc;
     }, {});
 
+    const currentClosures = allUsers.flatMap(u => u.enrollments || []).map(e => e.program).filter(p => p?.closedAt && p.currentClosureId).map(p => p.currentClosureId);
+    const historical = {};
+    if (currentClosures.length && !scope.standing) {
+      const saved = await models.EnrollmentSnapshot.findAll({ where: { closureId: { [Op.in]: [...new Set(currentClosures)] }, menteeId: inIds } });
+      for (const user of allUsers) {
+        const enrollment = this.pickPrimaryEnrollment(user.enrollments);
+        const snapshot = saved.find(s => s.enrollmentId === enrollment?.id && (!scope.clanId || (s.clanIds || []).includes(scope.clanId)));
+        if (snapshot?.performance?.report) historical[user.id] = snapshot.performance.report;
+      }
+    }
     return {
+      historical,
+      scoped: Boolean(scope.programId || scope.clanId || scope.standing),
       users: allUsers.reduce((acc, u) => { acc[u.id] = u; return acc; }, {}),
       tasks: groupBy(allTasks, 'menteeId'),
       delays: groupBy(allDelays, 'menteeId'),
@@ -857,22 +925,24 @@ class CohortService {
     };
   }
 
-  async getCohort(mentorId) {
-    const menteeIds = await this.resolveMenteeIds(mentorId);
+  async getCohort(mentorId, { clanId = null } = {}) {
+    const menteeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
     if (!menteeIds.length) return { cohort: [], totals: { mentees: 0, pendingApprovals: 0, openBlockers: 0, atRisk: 0, onTimeRate: 0 } };
 
+    const scope = await this.workScopeForClan(clanId);
     const [preloads, clanMapRes] = await Promise.all([
-      this.preloadMenteeData(menteeIds),
+      this.preloadMenteeData(menteeIds, scope),
       (async () => {
         const { clanIds, clanNameById } = await this.mentorClanMap(mentorId);
+        const scopedClanIds = clanId ? clanIds.filter((id) => id === clanId) : clanIds;
         let menteeMemberships = [];
-        if (clanIds.length) {
+        if (scopedClanIds.length) {
           menteeMemberships = await models.ClanMembership.findAll({
-            where: { clanId: { [Op.in]: clanIds }, status: 'active', role: 'mentee' },
+            where: { clanId: { [Op.in]: scopedClanIds }, status: 'active', role: 'mentee' },
             attributes: ['userId', 'clanId'],
           });
         }
-        return { clanIds, clanNameById, menteeMemberships };
+        return { clanIds: scopedClanIds, clanNameById, menteeMemberships };
       })()
     ]);
 
@@ -925,28 +995,31 @@ class CohortService {
    * these numbers describe what actually happened inside the window - so the
    * Reports week/month toggle changes them for real.
    */
-  async getPeriodActivity(mentorId, period = 'week') {
+  async getPeriodActivity(mentorId, period = 'week', { clanId = null } = {}) {
     const days = period === 'month' ? 30 : 7;
     const since = new Date(Date.now() - days * 86400000);
-    const menteeIds = await this.resolveMenteeIds(mentorId);
+    const menteeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
     if (!menteeIds.length) {
       return { period, days, totalMentees: 0, tasksCompleted: 0, onTime: 0, onTimeRate: 0, pointsEarned: 0, blockersOpened: 0, blockersResolved: 0, activeMentees: 0 };
     }
     const inCohort = { [Op.in]: menteeIds };
+    const scope = await this.workScopeForClan(clanId);
+    const taskFilter = this.taskFilterForScope(scope);
+    const clanFilter = this.clanFilterForScope(scope);
 
     const [completedTasks, submittedInWindow, blockersOpened, blockersResolved] = await Promise.all([
       // Tasks completed inside the window (with lateness + points for quality/throughput).
       models.AssignedTask.findAll({
-        where: { menteeId: inCohort, status: 'completed', completedAt: { [Op.gte]: since } },
+        where: { menteeId: inCohort, status: 'completed', completedAt: { [Op.gte]: since }, ...taskFilter },
         attributes: ['menteeId', 'isLate', 'pointsAwarded', 'completedAt']
       }),
       // Tasks submitted inside the window (an activity signal even if not yet reviewed).
       models.AssignedTask.findAll({
-        where: { menteeId: inCohort, submittedAt: { [Op.gte]: since } },
+        where: { menteeId: inCohort, submittedAt: { [Op.gte]: since }, ...taskFilter },
         attributes: ['menteeId']
       }),
-      models.Blocker.count({ where: { menteeId: inCohort, openedAt: { [Op.gte]: since } } }),
-      models.Blocker.count({ where: { menteeId: inCohort, resolvedAt: { [Op.gte]: since } } }),
+      models.Blocker.count({ where: { menteeId: inCohort, openedAt: { [Op.gte]: since }, ...clanFilter } }),
+      models.Blocker.count({ where: { menteeId: inCohort, resolvedAt: { [Op.gte]: since }, ...clanFilter } }),
     ]);
 
     const tasksCompleted = completedTasks.length;
@@ -975,8 +1048,8 @@ class CohortService {
    * and ask for a few tight paragraphs in the mentor's voice. Returns the text;
    * throws ValidationError (no data) or bubbles the AI error (no key configured).
    */
-  async generateReportSummary(mentorId, period = 'week') {
-    const { cohort } = await this.getCohort(mentorId);
+  async generateReportSummary(mentorId, period = 'week', { clanId = null } = {}) {
+    const { cohort } = await this.getCohort(mentorId, { clanId });
     if (!cohort.length) throw new ValidationError('No cohort data to summarise yet.');
 
     const size = cohort.length;
@@ -992,7 +1065,7 @@ class CohortService {
     const pending = cohort.reduce((n, m) => n + m.pendingApprovals, 0);
     const openBlockers = cohort.reduce((n, m) => n + m.openBlockers, 0);
     const top = [...cohort].sort((a, b) => (b.absoluteProgress + b.onTimeRate) - (a.absoluteProgress + a.onTimeRate)).slice(0, 3);
-    const activity = await this.getPeriodActivity(mentorId, period);
+    const activity = await this.getPeriodActivity(mentorId, period, { clanId });
 
     // Cohort-wide difficulty breakdown — sum per band across all mentees.
     const totalEasy   = cohort.reduce((n, m) => n + (m.tasksEasy   || 0), 0);

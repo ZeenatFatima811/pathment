@@ -36,7 +36,7 @@ const listBlockers = catchAsync(async (req, res) => {
 
 const createBlocker = catchAsync(async (req, res) => {
   const blocker = await frictionService.createBlocker(
-    { ...req.body, menteeId: targetMenteeId(req) }, req.user.id, req.user
+    { ...req.body, clanId: require('../middlewares/portalScope').requestedClanId(req), menteeId: targetMenteeId(req) }, req.user.id, req.user
   );
   res.status(201).json(successResponse('Blocker logged', { blocker }, 201));
 });
@@ -63,7 +63,7 @@ const listDelays = catchAsync(async (req, res) => {
 
 const createDelay = catchAsync(async (req, res) => {
   const delay = await frictionService.createDelay(
-    { ...req.body, menteeId: targetMenteeId(req) }, req.user.id, req.user
+    { ...req.body, clanId: require('../middlewares/portalScope').requestedClanId(req), menteeId: targetMenteeId(req) }, req.user.id, req.user
   );
   res.status(201).json(successResponse('Delay logged', { delay }, 201));
 });

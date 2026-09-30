@@ -124,17 +124,25 @@ class TaskService {
 
     const clanId = await resolveMenteeClanId(menteeId, requestedClanId, { actorId: mentorId });
     if (!clanId) throw new ValidationError('Mentee has no clan membership to attach this task to');
+    const taskClan = await models.Clan.findByPk(clanId);
+    const authz = require('./authzService');
+    const actor = await models.User.findByPk(mentorId);
+    if (!await authz.can(actor, require('../config/permissions').PERMISSIONS.TASK_ASSIGN, await authz.scopeOfClan(clanId))) throw new ForbiddenError('You cannot assign work in this clan');
+    if (taskClan?.kind === 'standing') {
+      if (enrollmentId) throw new ValidationError('Standing clan tasks cannot use a program enrollment');
+      enrollmentId = null;
+    }
 
     // Resolve the active enrollment if the caller didn't supply one (the assign
     // drawer only knows the mentee). Falls back to most-recent enrollment.
-    if (!enrollmentId) {
+    if (!enrollmentId && taskClan?.kind !== 'standing') {
       const membership = await models.ClanMembership.findOne({
         where: { userId: menteeId, clanId, role: 'mentee' },
         attributes: ['enrollmentId']
       });
       enrollmentId = membership?.enrollmentId || null;
       if (!enrollmentId) {
-        const enrollment = await this._activeEnrollmentForMentee(menteeId);
+        const enrollment = await models.Enrollment.findOne({ where: { menteeId, programId: taskClan.programId } });
         if (!enrollment) throw new NotFoundError('Mentee has no enrollment to attach this task to');
         enrollmentId = enrollment.id;
       }
@@ -837,9 +845,12 @@ class TaskService {
    * as complete. Flags the enrollment ready for the mentor's sign-off when done.
    */
   async updateEnrollmentTaskStats(enrollmentId) {
+    if (!enrollmentId) return;
     // Load enrollment to know which program we're in
     const enrollment = await models.Enrollment.findByPk(enrollmentId);
     if (!enrollment) return null;
+    const program = await models.Program.findByPk(enrollment.programId);
+    if (program?.closedAt) return enrollment;
 
     // Progress is measured against the mentee's ACTUAL workload - every
     // non-cancelled task assigned to this enrollment - and completed is the done
