@@ -29,6 +29,8 @@ export interface RosterReviewState {
   stage?: string | null;
   /** An admin has queried this grade and the mentor has not answered yet. */
   hasOpenQuestion?: boolean;
+  /** A mentor has asked an admin to change this approved grade. */
+  hasChangeRequest?: boolean;
 }
 
 export interface RecipientRosterTableProps {
@@ -304,6 +306,15 @@ function ReviewNote({
       return (
         <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
           <Edit3 className="w-2.5 h-2.5" /> Changed — verify to save
+        </span>
+      );
+    }
+    if (review.hasChangeRequest) {
+      // The grade stands; a mentor has asked an admin to move it.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · change requested
         </span>
       );
     }

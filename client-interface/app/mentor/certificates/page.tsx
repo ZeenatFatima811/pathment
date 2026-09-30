@@ -8,7 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   Loader2, Award, Calendar, ArrowLeft, Users, Send, Eye, CheckCircle2, XCircle, AlertCircle,
   TrendingUp, Download, Linkedin, ShieldCheck, X, Info,
-  Sparkles, Edit3, Clock, Lock
+  Sparkles, Edit3, Clock, Lock, FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/context/AuthContext';
@@ -98,6 +98,7 @@ export default function MentorCertificatesPage() {
   const [search, setSearch] = useState('');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [clanFilter, setClanFilter] = useState('all');
+  const [requestingReport, setRequestingReport] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
   const [sortBy, setSortBy] = useState<RosterSort>('none');
   const [personalNote, setPersonalNote] = useState('');
@@ -472,6 +473,7 @@ export default function MentorCertificatesPage() {
           case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
           case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
           case 'questioned':      return Boolean(row?.hasOpenQuestion);
+          case 'change_requested': return Boolean(row?.hasChangeRequest);
           case 'changed':  return Boolean(row?.overridden);
           // Sendable needs BOTH: the admin has released the clan, and this
           // person's own grade is signed off. The clan alone was not enough —
@@ -1183,6 +1185,34 @@ export default function MentorCertificatesPage() {
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Review your mentees’ grades and sign off. Send certificates after admin approval.</p>
               </div>
+
+              {/* Reports are an admin surface; a mentor who wants one had no way
+                  to say so. This asks — the admin still sends it. */}
+              {activeTemplateId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!activeTemplateId) return;
+                    try {
+                      setRequestingReport(true);
+                      const res = await certificatesApi.requestCertificateReport(activeTemplateId, {
+                        clanId: clanFilter !== 'all' ? clanFilter : undefined,
+                      });
+                      toast.success(res.message || 'Report requested');
+                    } catch (err) {
+                      toast.error(extractApiErrorMessage(err, 'Could not request the report'));
+                    } finally {
+                      setRequestingReport(false);
+                    }
+                  }}
+                  disabled={requestingReport}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-bold text-foreground hover:border-brand-500/40 disabled:opacity-50"
+                  title="Ask an admin to send you the certificate report for your clan"
+                >
+                  {requestingReport ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                  Request report
+                </button>
+              )}
 
             </div>
 

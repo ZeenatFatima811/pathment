@@ -263,6 +263,33 @@ const notifyMentorsForMentee = catchAsync(async (req, res) => {
   ));
 });
 
+/** The mentor's way forward once an admin has approved a grade. */
+const requestChange = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestChange(
+    req.params.id, req.params.menteeId,
+    { finalTier: req.body?.finalTier, decision: req.body?.decision, reason: req.body?.reason },
+    req.user
+  );
+  res.status(201).json(successResponse('Change request sent to the admins', { request }));
+});
+
+const resolveChangeRequest = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.resolveChangeRequest(
+    req.params.questionId, { approve: req.body?.approve === true, note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    request.resolution === 'approved' ? 'Change approved and applied' : 'Change request declined',
+    { request }
+  ));
+});
+
+const requestReport = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestReport(
+    req.params.id, { clanId: req.body?.clanId, note: req.body?.note }, req.user
+  );
+  res.status(201).json(successResponse('Report requested from the admins', { request }));
+});
+
 module.exports = {
   createTemplate,
   listTemplates,
@@ -297,5 +324,8 @@ module.exports = {
   answerQuestion,
   withdrawQuestion,
   listQuestions,
-  notifyMentorsForMentee
+  notifyMentorsForMentee,
+  requestChange,
+  resolveChangeRequest,
+  requestReport
 };

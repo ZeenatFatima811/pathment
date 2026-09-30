@@ -252,6 +252,30 @@ router.delete(
   certificateController.withdrawQuestion
 );
 
+// A mentor asking to change a grade an admin has already approved, and the
+// admin's decision on it. Approving applies the change as the admin's own.
+router.post(
+  '/templates/:id/verifications/:menteeId/change-request',
+  authenticate,
+  authorize(['mentor', 'admin']),
+  certificateController.requestChange
+);
+
+router.post(
+  '/questions/:questionId/resolve',
+  authenticate,
+  authorize(['admin']),
+  certificateController.resolveChangeRequest
+);
+
+// A mentor asking an admin for the certificate report for their clan.
+router.post(
+  '/templates/:id/report-request',
+  authenticate,
+  authorize(['mentor', 'admin']),
+  certificateController.requestReport
+);
+
 // Chase one mentee's mentors, rather than every unfinished clan.
 router.post(
   '/templates/:id/verifications/:menteeId/notify-mentor',

@@ -202,6 +202,8 @@ export interface CertificateVerification {
   status: 'pending' | 'verified';
   /** An admin has queried this grade and the mentor has not answered yet. */
   hasOpenQuestion?: boolean;
+  /** A mentor has asked to change this approved grade; an admin must decide. */
+  hasChangeRequest?: boolean;
   /**
    * How far the review has got. `status` cannot distinguish a mentor's check
    * from an admin's approval — both write 'verified' — so this carries the
@@ -227,8 +229,19 @@ export interface CertificateReviewQuestion {
   menteeName: string | null;
   clanId: string | null;
   clanName: string | null;
+  /**
+   * Which way this thread runs. A change request is the question thread pointed
+   * the other way — mentor to admin — so it shares the shape and the UI.
+   */
+  kind: 'question' | 'change_request' | 'report_request';
   question: string;
+  /** What a change request asks for, so an admin can grant it in one press. */
+  requestedTier?: string | null;
+  requestedDecision?: 'award' | 'no_certificate' | null;
+  /** How the admin decided it. `answer` holds their note either way. */
+  resolution?: 'approved' | 'declined' | null;
   askedBy: string | null;
+  askedById?: string | null;
   askedAt: string;
   /** The mentor whose decision is in question. */
   addressedTo: string | null;
@@ -307,6 +320,10 @@ export interface VerificationSummary {
   adminApproved?: number;
   /** Queried by an admin, awaiting the mentor's answer. */
   questioned?: number;
+  /** Approved grades a mentor has asked to change, awaiting an admin. */
+  changeRequested?: number;
+  /** Clans whose mentor has asked for the certificate report. */
+  reportRequests?: number;
   /** Clans the admin has released for issuing. */
   approvedClans: number;
   /** Verified but not yet released — waiting on the admin. */
@@ -671,6 +688,24 @@ export const certificatesApi = {
   answerReviewQuestion: (questionId: string, answer: string) =>
     apiClient.post<{ success: boolean; message: string; data: { question: CertificateReviewQuestion } }>(
       `/certificates/questions/${questionId}/answer`, { answer }),
+
+  /**
+   * A mentor asking to change a grade an admin has approved. Only valid once it
+   * is locked — before that the mentor just changes it.
+   */
+  requestGradeChange: (templateId: string, menteeId: string, body: { finalTier?: string | null; decision?: string; reason: string }) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/change-request`, body),
+
+  /** The admin's decision. Approving applies the change as their own. */
+  resolveChangeRequest: (questionId: string, approve: boolean, note?: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/questions/${questionId}/resolve`, { approve, note }),
+
+  /** A mentor asking an admin for the certificate report for their clan. */
+  requestCertificateReport: (templateId: string, body: { clanId?: string | null; note?: string } = {}) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/report-request`, body),
 
   withdrawReviewQuestion: (questionId: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/certificates/questions/${questionId}`),

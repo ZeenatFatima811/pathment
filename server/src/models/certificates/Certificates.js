@@ -143,8 +143,33 @@ module.exports = (sequelize, DataTypes) => {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
     templateId: { type: DataTypes.UUID, allowNull: false, field: 'template_id' },
-    menteeId: { type: DataTypes.UUID, allowNull: false, field: 'mentee_id' },
+    /** Null for a report request, which is about a clan rather than a person. */
+    menteeId: { type: DataTypes.UUID, field: 'mentee_id' },
     clanId: { type: DataTypes.UUID, field: 'clan_id' },
+    /**
+     * Which way this thread runs.
+     *   question        admin → mentor   "why did you give this grade?"
+     *   change_request  mentor → admin   "may I change it, because…"
+     *   report_request  mentor → admin   "please send me the report"
+     */
+    kind: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'question',
+      allowNull: false,
+      validate: { isIn: [['question', 'change_request', 'report_request']] }
+    },
+    /** What a change request is asking for, so the admin can grant it in one press. */
+    requestedTier: { type: DataTypes.STRING(50), field: 'requested_tier' },
+    requestedDecision: {
+      type: DataTypes.STRING(20),
+      field: 'requested_decision',
+      validate: { isIn: [['award', 'no_certificate']] }
+    },
+    /** Which way the admin went. `answer` holds their note either way. */
+    resolution: {
+      type: DataTypes.STRING(20),
+      validate: { isIn: [['approved', 'declined']] }
+    },
     askedBy: { type: DataTypes.UUID, allowNull: false, field: 'asked_by' },
     askedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'asked_at' },
     question: { type: DataTypes.TEXT, allowNull: false },
