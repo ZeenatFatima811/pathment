@@ -7,6 +7,7 @@ const { cleanDb, createAdmin, createMentor, createMentee, createProgram, authHea
 
 describe('explicit No certificate decisions', () => {
   let admin, mentor, coMentor, outsider, mentee, peer, clan, template;
+  const inWorkspace = fn => () => require('../../src/utils/auditContext').runWithRequestContext({ organizationId: clan.organizationId, workspaceJob: true }, fn);
   const reason = 'Required roadmap projects were not completed during this fellowship.';
   const decline = (user = mentor, explanation = reason) => verification.verify(template.id, mentee.id,
     { decision: 'no_certificate', finalTier: null, reason: explanation }, user);
@@ -34,16 +35,16 @@ describe('explicit No certificate decisions', () => {
     await verification.open(template.id, [mentee, peer].map(m => ({ mentee_id: m.id, certificate_tier: 'silver', match_score: 80 })), { notify: false });
   });
 
-  it('requires a reason, an explicit decision, and clan permission', async () => {
+  it('requires a reason, an explicit decision, and clan permission', inWorkspace(async () => {
     await expect(decline(mentor, '  ')).rejects.toThrow(/reason/i);
     await expect(decline(outsider)).rejects.toThrow();
     await expect(verification.verify(template.id, mentee.id, { decision: 'no_certificate', finalTier: 'silver', reason }, mentor)).rejects.toThrow(/tier/i);
     const row = await decline(coMentor);
     expect(row).toMatchObject({ decision: 'no_certificate', finalTier: null, aiTier: 'silver', status: 'verified', overridden: true, overrideReason: reason });
     expect(row.decisionHistory).toHaveLength(1);
-  });
+  }));
 
-  it('counts as verified, waits for approval, and excludes recipients for both roles and legacy issuance', async () => {
+  it('counts as verified, waits for approval, and excludes recipients for both roles and legacy issuance', inWorkspace(async () => {
     await decline();
     await verification.verify(template.id, peer.id, {}, mentor);
     expect((await verification.summary(template.id)).allVerified).toBe(true);
@@ -55,9 +56,9 @@ describe('explicit No certificate decisions', () => {
     expect(await models.CertificateInstance.count({ where: { menteeId: mentee.id } })).toBe(0);
     const [recipient] = (await service.getQualification(template.id, null, mentor)).participation.filter(m => m.id === mentee.id);
     expect(recipient).toMatchObject({ assignedTier: null, assignedDecision: 'no_certificate' });
-  });
+  }));
 
-  it('locks mentor decisions after approval while allowing an audited admin correction', async () => {
+  it('locks mentor decisions after approval while allowing an audited admin correction', inWorkspace(async () => {
     await decline();
     await verification.verify(template.id, peer.id, {}, mentor);
     await verification.approveClan(template.id, clan.id, {}, admin);
@@ -69,17 +70,17 @@ describe('explicit No certificate decisions', () => {
     await expect(decline()).rejects.toThrow(/only an admin/i);
     await verification.open(template.id, [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null, reasoning: reason }], { notify: false });
     expect((await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: mentee.id } })).decision).toBe('award');
-  });
+  }));
 
-  it('preserves No certificate when admin resends the round', async () => {
+  it('preserves No certificate when admin resends the round', inWorkspace(async () => {
     await decline();
     await verification.open(template.id, [{ mentee_id: mentee.id, certificate_tier: 'silver' }], { notify: false });
     const row = await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: mentee.id } });
     expect(row.decision).toBe('no_certificate');
     expect(row.overrideReason).toBe(reason);
-  });
+  }));
 
-  it('supports an AI No certificate recommendation without treating a failed evaluation as a decision', async () => {
+  it('supports an AI No certificate recommendation without treating a failed evaluation as a decision', inWorkspace(async () => {
     const payload = { mentee_id: mentee.id, normalized_score: 20, completion_rate: 10, on_time_rate: 20, blockers: { open: 0 } };
     const check = preCheckHardConstraints(payload, template.criteria);
     expect(check.maxEligibleTier).toBeNull();
@@ -92,22 +93,22 @@ describe('explicit No certificate decisions', () => {
     const failure = service.buildFallbackResult(payload, check);
     expect(failure).toMatchObject({ _failed: true, decision: 'undecided', certificate_tier: null });
     expect(await verification.open(template.id, [failure], { notify: false })).toMatchObject({ created: 0, updated: 0 });
-  });
+  }));
 
-  it('requires a reason to upgrade an AI No certificate recommendation', async () => {
+  it('requires a reason to upgrade an AI No certificate recommendation', inWorkspace(async () => {
     await verification.open(template.id, [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null, reasoning: reason }], { notify: false });
     await expect(verification.verify(template.id, mentee.id, { decision: 'award', finalTier: 'silver' }, mentor)).rejects.toThrow(/reason/i);
     expect(await verification.verify(template.id, mentee.id, { decision: 'award', finalTier: 'silver', reason: 'Reviewed the missing submissions and confirmed completion.' }, mentor)).toMatchObject({ decision: 'award', overridden: true });
-  });
-  it('rolls back the whole batch when any decision is invalid', async () => {
+  }));
+  it('rolls back the whole batch when any decision is invalid', inWorkspace(async () => {
     await expect(verification.verifyMany(template.id, [
       { menteeId: peer.id, decision: 'award', finalTier: 'silver' },
       { menteeId: mentee.id, decision: 'no_certificate' }
     ], mentor)).rejects.toThrow(/reason/i);
     expect(await models.CertificateVerification.count({ where: { templateId: template.id, status: 'verified' } })).toBe(0);
-  });
+  }));
 
-  it('exposes the saved decision, reason, and audit record through the reviewer APIs', async () => {
+  it('exposes the saved decision, reason, and audit record through the reviewer APIs', inWorkspace(async () => {
     const request = require('supertest');
     const app = require('../../src/index');
     const url = `/api/certificates/templates/${template.id}/verifications/${mentee.id}`;
@@ -119,9 +120,9 @@ describe('explicit No certificate decisions', () => {
     expect(evidence.verification).toMatchObject({ decision: 'no_certificate', overrideReason: reason });
     expect(evidence.verification.decisionHistory[0].by).toBe(coMentor.id);
     await expect(service.getMenteeEvidence(template.id, mentee.id, mentee)).rejects.toThrow(/not been published/i);
-  });
+  }));
 
-  it('never races into both an issued certificate and a No certificate decision', async () => {
+  it('never races into both an issued certificate and a No certificate decision', inWorkspace(async () => {
     await verification.verify(template.id, mentee.id, {}, mentor);
     await verification.verify(template.id, peer.id, {}, mentor);
     await verification.approveClan(template.id, clan.id, {}, admin);
@@ -129,21 +130,21 @@ describe('explicit No certificate decisions', () => {
     const row = await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: mentee.id } });
     const issued = await models.CertificateInstance.count({ where: { templateId: template.id, menteeId: mentee.id } });
     expect(row.decision === 'no_certificate' && issued > 0).toBe(false);
-  });
+  }));
 
-  it('treats missing AI rule evidence as a failed evaluation, not No certificate', async () => {
+  it('treats missing AI rule evidence as a failed evaluation, not No certificate', inWorkspace(async () => {
     const criteria = [{ id: 'silver', name: 'Silver', customRule: 'Delivered a reviewed final project' }];
     const payload = { mentee_id: mentee.id, normalized_score: 80, completion_rate: 90, on_time_rate: 80, blockers: {} };
     const [evaluation] = await service.parseBatchAIResponse(JSON.stringify([{ mentee_id: mentee.id, certificate_tier: null }]), criteria,
       [{ menteeId: mentee.id, menteePayload: payload }]);
     expect(evaluation.result).toMatchObject({ _failed: true, decision: 'undecided' });
-  });
+  }));
 
-  it('does not issue an AI No certificate recommendation before a review round exists', async () => {
+  it('does not issue an AI No certificate recommendation before a review round exists', inWorkspace(async () => {
     await models.CertificateVerification.destroy({ where: { templateId: template.id, menteeId: mentee.id } });
     await template.update({ aiEvaluation: { results: [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null }] } });
     expect(await issue(admin, [mentee.id])).toMatchObject({ count: 0, skippedNoCertificate: 1 });
     await template.update({ aiEvaluation: null });
-  });
+  }));
 
 });
