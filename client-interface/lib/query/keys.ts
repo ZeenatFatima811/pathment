@@ -20,7 +20,8 @@ export const qk = {
 
   clan: {
     all: ['clan'] as const,
-    memberships: ['clan', 'memberships'] as const,
+    /** Keyed by user so switching accounts cannot reuse another mentee's clans. */
+    memberships: (userId: string) => ['clan', 'memberships', userId] as const,
     detail: (clanId: string) => ['clan', 'detail', clanId] as const,
     publicJoin: (clanId: string) => ['clan', 'public-join', clanId] as const,
     joinRequests: (clanId: string, status = 'pending') =>

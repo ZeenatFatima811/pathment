@@ -167,7 +167,7 @@ export default function Navigation({ role }: NavigationProps) {
     if (role === 'mentor' && clans.length >= 2) {
       const options = [
         { value: ALL_CLANS, label: 'All clans' },
-        ...clans.map((c) => ({ value: c.id, label: c.name })),
+        ...clans.map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}` })),
       ];
       return (
         <SelectMenu
@@ -184,7 +184,7 @@ export default function Navigation({ role }: NavigationProps) {
         <SelectMenu
           value={menteeActiveClanId || menteeClans[0].id}
           onChange={setMenteeActiveClanId}
-          options={menteeClans.map((c) => ({ value: c.id, label: c.name }))}
+          options={menteeClans.map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}` }))}
           ariaLabel="Switch clan"
           className="w-full"
         />
