@@ -21,7 +21,7 @@ import { Drawer } from '@/components/shared/Drawer';
 import { MenteeEvidenceDrawer, RecipientRosterTable, CertificatePreview, RosterFilterBar, type CertificateRenderData, type ReviewFilter, type RosterSort } from '@/components/certificates/shared';
 import { scopeCertificateReviews } from '@/lib/utils/certificate-review-scope';
 import { downloadCertificateAsPng } from '@/lib/utils/certificate-renderer';
-import { CertificateTemplateCover } from '@/components/certificates/shared/CertificateTemplateCover';
+import { CertificateTemplateCover, CertificateTemplateGallery } from '@/components/certificates/shared/CertificateTemplateCover';
 
 
 
@@ -1111,21 +1111,8 @@ export default function MentorCertificatesPage() {
       {}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-5 mb-6">
         {}
-        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Certificate Template</p>
-              <h3 className="text-sm font-bold text-foreground mt-0.5">{currentTemplate?.name || 'Certificate Template'}</h3>
-            </div>
-            {currentTemplate?.bgImageUrl && (
-              <span className="px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-600 text-[10px] font-bold">Active</span>
-            )}
-          </div>
-          {currentTemplate?.bgImageUrl && (
-            <div className="aspect-[2.4] rounded-2xl overflow-hidden border border-border/80 bg-muted/20">
-              <img src={currentTemplate.bgImageUrl} className="w-full h-full object-cover" alt="Preview" />
-            </div>
-          )}
+        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs">
+          {currentTemplate ? <CertificateTemplateGallery template={currentTemplate} /> : null}
         </div>
 
         {}
