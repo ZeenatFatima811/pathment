@@ -155,7 +155,9 @@ class CertificateService {
    */
   async resolveMenteeScope(user, { programId = null, clanId = null } = {}) {
     if (!user) return [];
-    if (await authzService.hasAdminAccess(user)) return null;
+    // `actsAsAdmin`, not `hasAdminAccess`: in the mentor portal an admin gets a
+    // mentor's rows. See authzService.actsAsAdmin.
+    if (await authzService.actsAsAdmin(user)) return null;
 
     const clanIds = await this.getMentorScopedMenteeClans(user, programId, { clanId });
     if (!clanIds.length) return [];
@@ -205,7 +207,7 @@ class CertificateService {
     // Unrestricted ONLY for real admin access. Everyone else is confined to the
     // clans they mentor — and to none at all if they mentor none, which is the
     // safe answer rather than the whole programme.
-    const isAdmin = await authzService.hasAdminAccess(user);
+    const isAdmin = await authzService.actsAsAdmin(user);
 
     if (!isAdmin) {
       const clanIds = await this.getMentorScopedMenteeClans(user, programId, { clanId });
@@ -669,8 +671,9 @@ class CertificateService {
 
     const menteeIds = mentees.map(m => m.id);
 
-    // An admin run is programme-wide and carries no clan.
-    if (await authzService.hasAdminAccess(user)) {
+    // An admin run is programme-wide and carries no clan — but only from the
+    // admin portal; a run started on a mentor screen is that mentor's clans.
+    if (await authzService.actsAsAdmin(user)) {
       const { runId, total } = await this.enqueueEvaluation(
         id, menteeIds, user.id, criteria, null
       );
@@ -1256,7 +1259,7 @@ class CertificateService {
     // `user.role`, which says only what their account was created as — a
     // co-mentor promoted from a mentee account was falling past this branch
     // and listing every template in the org.
-    if (!(await authzService.hasAdminAccess(user))) {
+    if (!(await authzService.actsAsAdmin(user))) {
       const mentoredClanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
       const mentoredClans = mentoredClanIds.length
         ? await models.Clan.findAll({

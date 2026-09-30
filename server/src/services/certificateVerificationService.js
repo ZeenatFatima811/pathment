@@ -166,7 +166,8 @@ class CertificateVerificationService {
     if (!template) throw new NotFoundError('Certificate template not found');
 
     const where = { templateId };
-    const isAdmin = await authzService.hasAdminAccess(user);
+    // The roster that leaked: an admin on a MENTOR screen was handed every clan.
+    const isAdmin = await authzService.actsAsAdmin(user);
     if (!isAdmin) {
       const clanIds = await this._reviewableClanIds(user, template.programId, clanId);
       if (!clanIds.length) return { template: this._templateSummary(template), rows: [], clans: [] };
