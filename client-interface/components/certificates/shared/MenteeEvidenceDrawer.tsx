@@ -10,6 +10,9 @@ import {
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { SelectMenu } from '@/components/shared/SelectMenu';
+import { reviewNavigationAction } from '@/lib/utils/review-navigation-keys';
+import { reviewActionLabels } from '@/lib/utils/certificate-review-stage';
+import { usePermissions } from '@/lib/hooks/usePermissions';
 import { certificatesApi, type MenteeEvidence, type EvidenceRoadmap } from '@/lib/services/certificates-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
@@ -53,6 +56,11 @@ interface MenteeEvidenceDrawerProps {
 export function MenteeEvidenceDrawer({
   templateId, menteeId, onClose, onTierChange, onDecided, canDecide = true, initialSelection, navigation,
 }: MenteeEvidenceDrawerProps) {
+  // Signing off is the mentor's step; approving is the admin's. Read from the
+  // same check the server uses to set the stage, so the button never promises
+  // something different from what gets recorded.
+  const { canAccessAdmin } = usePermissions();
+  const actionLabels = reviewActionLabels(canAccessAdmin);
   const [evidence, setEvidence] = useState<MenteeEvidence | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,19 +104,30 @@ export function MenteeEvidenceDrawer({
     load();
   }, [menteeId, load]);
 
+  /**
+   * Arrow keys step through the queue.
+   *
+   * This used to require ALT+arrow, which nobody could discover and which asks
+   * for the one chord the browser has already claimed: Alt+Left is Back on
+   * Windows and Linux, so the reviewer either did nothing or lost the page.
+   * Reviewing six hundred people one at a time is the whole job on this screen
+   * and it should not need the mouse. The rule for which presses count lives in
+   * `reviewNavigationAction` so it can be read and tested without a DOM.
+   */
   useEffect(() => {
     if (!menteeId || !navigation) return;
+
     const navigate = (event: KeyboardEvent) => {
-      if (!event.altKey) return;
-      if (event.key === 'ArrowLeft' && navigation.onPrevious) {
-        event.preventDefault();
-        navigation.onPrevious();
-      }
-      if (event.key === 'ArrowRight' && navigation.onNext) {
-        event.preventDefault();
-        navigation.onNext();
-      }
+      const action = reviewNavigationAction(event, event.target as HTMLElement | null);
+      const step = action === 'previous' ? navigation.onPrevious
+        : action === 'next' ? navigation.onNext
+          : null;
+      if (!step) return;
+
+      event.preventDefault();
+      step();
     };
+
     window.addEventListener('keydown', navigate);
     return () => window.removeEventListener('keydown', navigate);
   }, [menteeId, navigation]);
@@ -145,7 +164,7 @@ export function MenteeEvidenceDrawer({
         ...decisionPayload(draftTier),
         reason: needsReason ? reason.trim() : undefined,
       });
-      toast.success(isChange ? 'Grade changed and signed off' : 'Grade signed off');
+      toast.success(isChange ? actionLabels.doneChanged : actionLabels.done);
       await onDecided?.();
       if (navigation?.onNext) navigation.onNext();
       else onClose();
@@ -194,7 +213,14 @@ export function MenteeEvidenceDrawer({
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
-                    <span>Review progress</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      Review progress
+                      <span className="hidden items-center gap-1 font-normal sm:inline-flex">
+                        <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px] leading-4">←</kbd>
+                        <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px] leading-4">→</kbd>
+                        to move
+                      </span>
+                    </span>
                     <span>{navigation.position} / {navigation.total}</span>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -202,8 +228,8 @@ export function MenteeEvidenceDrawer({
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button type="button" onClick={navigation.onPrevious} disabled={!navigation.onPrevious} aria-label="Previous mentee" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-                  <button type="button" onClick={navigation.onNext} disabled={!navigation.onNext} aria-label="Next mentee" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                  <button type="button" onClick={navigation.onPrevious} disabled={!navigation.onPrevious} aria-label="Previous mentee (left arrow)" title="Previous  ←" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                  <button type="button" onClick={navigation.onNext} disabled={!navigation.onNext} aria-label="Next mentee (right arrow)" title="Next  →" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
                 </div>
               </div>
             </div>
@@ -398,7 +424,7 @@ export function MenteeEvidenceDrawer({
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                   {v
-                    ? `${isChange ? 'Save change and sign off' : 'Sign off this grade'}${navigation?.onNext ? ' · Next' : ''}`
+                    ? `${isChange ? actionLabels.confirmChanged : actionLabels.confirm}${navigation?.onNext ? ' · Next' : ''}`
                     : 'Set badge'}
                 </button>
                 {reasonMissing && (

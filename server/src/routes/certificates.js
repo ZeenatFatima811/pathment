@@ -198,6 +198,26 @@ router.delete(
   certificateController.revokeClanApproval
 );
 
+// Certificates that went out without a sign-off, and taking them back.
+//
+// Separate from `DELETE /templates/:id/instances`, which revokes EVERYTHING the
+// template issued — no use when 215 of 410 were signed off correctly and only
+// the rest have to go. Admin only: it is a real delete and the recipients are
+// not notified.
+router.get(
+  '/templates/:id/unreviewed-issued',
+  authenticate,
+  authorize(['admin']),
+  certificateController.unreviewedIssued
+);
+
+router.delete(
+  '/templates/:id/unreviewed-issued',
+  authenticate,
+  authorize(['admin']),
+  certificateController.revokeUnreviewed
+);
+
 // Re-open / re-notify the round, optionally moving the deadline.
 router.post(
   '/templates/:id/verifications-remind',

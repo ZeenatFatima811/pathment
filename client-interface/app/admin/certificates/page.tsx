@@ -9,6 +9,69 @@ import { ConfirmModal } from '@/components/shared';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { programsApi } from '@/lib/services/program-api';
 
+/**
+ * What a template actually contains, at a glance.
+ *
+ * This used to render `bgImageUrl` alone — one image for the whole template. But
+ * a tier is its own complete design (`criteria[].artworkUrl`), so a template
+ * with Bronze, Silver and Participation showed ONLY the silver artwork, and the
+ * card read as "this is the silver certificate" rather than "this template
+ * issues three". Every tier is shown, named, so the card cannot imply otherwise.
+ *
+ * Falls back to the shared background for older templates that predate per-tier
+ * artwork, and to an icon when there is no image at all.
+ */
+function TemplatePreview({ template }: { template: CertificateTemplate }) {
+  const tiers = (template.criteria ?? []).filter(tier => tier.artworkUrl);
+
+  return (
+    <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
+      {tiers.length > 0 ? (
+        <div className="flex w-full h-full divide-x divide-border/60">
+          {tiers.map(tier => (
+            <div key={tier.id} className="relative flex-1 min-w-0 overflow-hidden">
+              <img
+                src={tier.artworkUrl}
+                className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                alt={`${tier.name} certificate`}
+              />
+              {/* Naming each panel is the point: three unlabelled slivers of
+                  artwork are no clearer than one. */}
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[9px] font-semibold uppercase tracking-wide text-center py-1 px-0.5 truncate">
+                {tier.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : template.bgImageUrl ? (
+        <img
+          src={template.bgImageUrl}
+          className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+          alt="Certificate background"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+          <Award className="w-10 h-10" />
+        </div>
+      )}
+
+      {tiers.length > 1 && (
+        <span className="absolute top-3 left-3 rounded-md bg-black/60 text-white text-[10px] font-bold px-2 py-0.5">
+          {tiers.length} tiers
+        </span>
+      )}
+
+      {template.logoUrl && (
+        <img
+          src={template.logoUrl}
+          className="absolute top-4 right-4 w-8 h-8 rounded-full border border-white/50 object-contain shadow-sm bg-white"
+          alt="Logo"
+        />
+      )}
+    </div>
+  );
+}
+
 export default function AdminCertificatesPage() {
   const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,26 +207,7 @@ export default function AdminCertificatesPage() {
                 className="group bg-card border border-border hover:border-brand-500/20 hover:shadow-md rounded-2xl overflow-hidden shadow-3xs transition-all duration-300 flex flex-col hover:-translate-y-0.5"
               >
                 {/* Card Image Preview */}
-                <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
-                  {template.bgImageUrl ? (
-                    <img 
-                      src={template.bgImageUrl} 
-                      className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" 
-                      alt="Certificate Background" 
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                      <Award className="w-10 h-10" />
-                    </div>
-                  )}
-                  {template.logoUrl && (
-                    <img 
-                      src={template.logoUrl} 
-                      className="absolute top-4 right-4 w-8 h-8 rounded-full border border-white/50 object-contain shadow-sm bg-white" 
-                      alt="Logo" 
-                    />
-                  )}
-                </div>
+                <TemplatePreview template={template} />
 
                 {/* Card Content */}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">

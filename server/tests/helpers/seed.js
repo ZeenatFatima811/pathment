@@ -9,6 +9,7 @@
 
 const bcrypt = require('bcrypt');
 const { sequelize, models } = require('../../src/db');
+const { setDefaultRequestContext } = require('../../src/utils/auditContext');
 const { generateRandomToken, hashToken, generateAccessToken } = require('../../src/utils/jwt');
 
 // Hard stop — never allow seed helpers to run against a non-test database
@@ -89,6 +90,26 @@ async function cleanDb() {
     const [organization] = await models.Organization.findOrCreate({
       where: { slug }, defaults: { name: 'Test Organization', status: 'active', timezone: 'UTC' },
     });
+
+    /**
+     * Say which workspace this database IS, before anything else is written.
+     *
+     * Several services now refuse to run without a workspace, because a
+     * tenant-scoped query with no tenant is a bug rather than a whole-table
+     * read. The app always has one — the request middleware sets it per call,
+     * `forEachWorkspace` sets it per background pass — but a test calling a
+     * service directly had neither, so forty-one tests across seven suites
+     * failed on a guard that was working exactly as designed.
+     *
+     * This runs the instant the organization exists and BEFORE its
+     * subscription row is written. The truncation above drops the workspace and
+     * the line above makes a new one with a new id, so anything written in
+     * between would be checked against the id of the workspace that was just
+     * deleted — which is how the first version of this turned a context failure
+     * into "Cannot write a record belonging to another workspace".
+     */
+    setDefaultRequestContext({ organizationId: organization.id, organizationSlug: organization.slug });
+
     const plan = await models.Plan.findOne({ where: { key: 'growth' } });
     if (plan) await models.OrganizationSubscription.findOrCreate({
       where: { organizationId: organization.id }, defaults: { planId: plan.id, status: 'active' },

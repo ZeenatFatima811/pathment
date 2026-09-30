@@ -1,5 +1,6 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { AWARDED_CERTIFICATES, NO_CERTIFICATE, INACTIVE, aiSelection } from '@/lib/utils/certificate-decision';
 import { useState, useMemo, useCallback } from 'react';
 import { toast } from 'sonner';
@@ -136,10 +137,16 @@ export function useRecipientSelection({
         switch (reviewFilter) {
           case 'pending':  return row?.status === 'pending';
           case 'verified': return row?.status === 'verified';
+          // Stage, not status: 'verified' cannot tell these two apart.
+          case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
+          case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
           case 'changed':  return Boolean(row?.overridden);
-          // Sendability belongs to the clan, not the person: the admin
-          // releases a clan and everyone in it becomes sendable at once.
-          case 'sendable': return (clanStates ?? []).some(c => c.clanId === m.clanId && c.canSend);
+          // Sendable needs BOTH: the admin has released the clan, and this
+          // person's own grade is signed off. It used to check only the clan,
+          // which read as "cleared to send" for people nobody had reviewed —
+          // and the server now refuses exactly those.
+          case 'sendable': return row?.status === 'verified'
+            && (clanStates ?? []).some(c => c.clanId === m.clanId && c.canSend);
           default: return true;
         }
       });
@@ -183,10 +190,33 @@ export function useRecipientSelection({
     [allFilteredIds, selectedMenteeIds]
   );
 
+  /**
+   * WHO WOULD ACTUALLY RECEIVE A CERTIFICATE: the selection intersected with what
+   * the filters are currently showing.
+   *
+   * `selectedMenteeIds` survives a filter change, which is what you want for the
+   * checkboxes — narrow to a clan, tick some people, widen again, they are still
+   * ticked. It is NOT what you want for issuing. Select-all with no filter put
+   * 621 people in the set; applying "Approved by an admin" then showed ~70 rows
+   * while the footer still read "621 mentees selected", and Issue sent
+   * `Array.from(selectedMenteeIds)` — all 621, including everyone the filter was
+   * deliberately hiding.
+   *
+   * Everything a person can act on is derived from this instead, so the count
+   * they read is the count that goes out.
+   */
+  const issuableMenteeIds = useMemo(() => {
+    const visible = new Set(allFilteredIds);
+    return new Set([...selectedMenteeIds].filter(id => visible.has(id)));
+  }, [selectedMenteeIds, allFilteredIds]);
+
+  /** Selected, but hidden by the current filters — surfaced so it is never silent. */
+  const hiddenSelectedCount = selectedMenteeIds.size - issuableMenteeIds.size;
+
   const selectedSummary = useMemo(() => {
     const summary: Record<string, number> = {};
     criteria.forEach(c => { summary[c.id] = 0; });
-    selectedMenteeIds.forEach(id => {
+    issuableMenteeIds.forEach(id => {
       const tier = getEffectiveTier(id);
       if (summary[tier] !== undefined) {
         summary[tier] = (summary[tier] ?? 0) + 1;
@@ -195,7 +225,7 @@ export function useRecipientSelection({
       }
     });
     return summary;
-  }, [criteria, selectedMenteeIds, getEffectiveTier]);
+  }, [criteria, issuableMenteeIds, getEffectiveTier]);
 
   const toggleAll = useCallback(() => {
     setSelectedMenteeIds(prev => {
@@ -290,6 +320,8 @@ export function useRecipientSelection({
     setRecipientType,
     selectedMenteeIds,
     setSelectedMenteeIds,
+    issuableMenteeIds,
+    hiddenSelectedCount,
     assignedTiers,
     setAssignedTiers,
     recipientMenteesList,

@@ -38,6 +38,7 @@ export function VerificationBanner({
   const confirm = useConfirm();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [bucket, setBucket] = useState<'blocked' | 'ready' | 'approved' | 'all'>('blocked');
 
   const reload = useCallback(async () => {
     const res = await certificatesApi.getVerificationSummary(templateId);
@@ -101,7 +102,36 @@ export function VerificationBanner({
   // exactly the moment they were wanted.
   const settled = summary.allVerified && summary.awaitingApproval === 0;
 
-  const matching = summary.clans.filter(c => c.clanName.toLowerCase().includes(search.toLowerCase()));
+  /**
+   * Which bucket a clan is in. These are three different jobs, not three
+   * shades of one: chase the mentors, press approve, or nothing at all.
+   */
+  const bucketOf = (c: typeof summary.clans[number]) =>
+    c.pending > 0 ? 'blocked' : c.approved ? 'approved' : 'ready';
+
+  const counts = {
+    blocked: summary.clans.filter(c => bucketOf(c) === 'blocked').length,
+    ready: summary.clans.filter(c => bucketOf(c) === 'ready').length,
+    approved: summary.clans.filter(c => bucketOf(c) === 'approved').length,
+  };
+
+  /**
+   * The list was alphabetical and paged six at a time, so with 28 clans the
+   * ones actually holding the cohort up were scattered across five pages among
+   * clans that were already finished. Ordered by what is owed instead: the
+   * clans blocking everything first, most outstanding at the top, then the ones
+   * waiting on a press of Approve, then the settled ones.
+   */
+  const RANK = { blocked: 0, ready: 1, approved: 2 } as const;
+  const matching = summary.clans
+    .filter(c => c.clanName.toLowerCase().includes(search.toLowerCase()))
+    .filter(c => bucket === 'all' || bucketOf(c) === bucket)
+    .sort((a, b) => {
+      const byBucket = RANK[bucketOf(a)] - RANK[bucketOf(b)];
+      if (byBucket !== 0) return byBucket;
+      if (a.pending !== b.pending) return b.pending - a.pending;
+      return a.clanName.localeCompare(b.clanName);
+    });
   const pages = Math.max(1, Math.ceil(matching.length / 6));
   const current = Math.min(page, pages);
   return (
@@ -120,7 +150,14 @@ export function VerificationBanner({
               : `${outstanding.length} of ${realClans.length} clan${realClans.length === 1 ? '' : 's'} have not verified yet`}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          · {summary.verified} of {summary.total} decisions signed off
+          {/* "signed off" counted mentor checks and admin approvals as one
+              number on the ADMIN's own banner. Split, because the two are
+              different steps and only the second releases anything. */}
+          · {summary.verified} of {summary.total} reviewed
+          {typeof summary.mentorVerified === 'number' && summary.mentorVerified > 0
+            && ` · ${summary.mentorVerified} signed off by mentors`}
+          {typeof summary.adminApproved === 'number' && summary.adminApproved > 0
+            && ` · ${summary.adminApproved} approved by an admin`}
           {summary.overridden > 0 && ` · ${summary.overridden} changed`}
           {!!summary.noCertificate && ` · ${summary.noCertificate} no certificate`}
         </span>
@@ -132,11 +169,61 @@ export function VerificationBanner({
       </div>
 
       <p className="text-xs text-muted-foreground">Approval locks mentor edits. Only admins can change approved decisions.</p>
-      <details className="rounded-xl border border-border bg-card p-3">
+      <details className="rounded-xl border border-border bg-card p-3" open={counts.blocked > 0 || counts.ready > 0}>
       <summary className="cursor-pointer text-sm font-medium">
         Review clan approvals · {realClans.length} clans
-        {unassigned ? ` · ${unassigned.total} without a clan` : ''}
+        {counts.blocked > 0 && <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">{counts.blocked} waiting on mentors</span>}
+        {counts.ready > 0 && <span className="ml-1.5 rounded-full bg-brand-500/15 px-2 py-0.5 text-[10px] font-bold text-brand-600 dark:text-brand-400">{counts.ready} to approve</span>}
       </summary>
+
+      {/* Three different jobs, so they are three different lists. Defaults to
+          the clans holding everything up, because that is what the admin opened
+          this to find. */}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {([
+          ['blocked', `Waiting on mentors (${counts.blocked})`],
+          ['ready', `Ready to approve (${counts.ready})`],
+          ['approved', `Approved (${counts.approved})`],
+          ['all', `All (${summary.clans.length})`],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => { setBucket(key); setPage(1); }}
+            className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition-colors ${
+              bucket === key
+                ? 'bg-brand-600 text-white'
+                : 'border border-border bg-card text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {unassigned && unassigned.total > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+          {/* Not a footnote: nobody mentors these, so no reminder will ever
+              reach anyone about them and they will sit here until an admin acts. */}
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="text-[11px] font-semibold text-foreground">
+            {unassigned.total} mentee{unassigned.total === 1 ? '' : 's'} in no clan
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            — no mentor owns these, so only an admin can review them
+          </span>
+          {onViewClan && (
+            <button
+              type="button"
+              onClick={() => onViewClan(null, 'No clan', unassigned.pending > 0 ? 'pending' : 'all')}
+              className="ml-auto rounded-lg border border-border bg-card px-2.5 py-1 text-[10px] font-semibold text-foreground hover:border-brand-500/40"
+            >
+              {unassigned.pending > 0 ? `Review ${unassigned.pending} pending` : 'View decisions'}
+            </button>
+          )}
+        </div>
+      )}
+
       <input aria-label="Search certificate clan approvals" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Find a clan…" className="my-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
       <ul className="space-y-3">
         {matching.slice((current - 1) * 6, current * 6).map((clan) => {
@@ -146,7 +233,7 @@ export function VerificationBanner({
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="font-semibold text-foreground">{clan.clanName}</p>
-                <p className="mt-0.5 text-muted-foreground">{clan.verified} of {clan.total} signed off · {percent}%</p>
+                <p className="mt-0.5 text-muted-foreground">{clan.verified} of {clan.total} reviewed · {percent}%</p>
               </div>
               {clan.approved && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-600">
@@ -208,7 +295,16 @@ export function VerificationBanner({
           </li>
         );})}
       </ul>
-      {!matching.length && <p className="py-3 text-sm text-muted-foreground">No matching clans.</p>}
+      {!matching.length && (
+        <p className="py-3 text-sm text-muted-foreground">
+          {search
+            ? 'No clans match that search.'
+            : bucket === 'blocked' ? 'Every clan has finished its review.'
+              : bucket === 'ready' ? 'No clan is waiting on your approval.'
+                : bucket === 'approved' ? 'No clan has been approved yet.'
+                  : 'No clans.'}
+        </p>
+      )}
       <div className="mt-3 flex items-center justify-between text-xs"><button type="button" disabled={current === 1} onClick={() => setPage(current - 1)} className="rounded-lg border px-3 py-2 disabled:opacity-40">Previous</button><span>{current} / {pages}</span><button type="button" disabled={current === pages} onClick={() => setPage(current + 1)} className="rounded-lg border px-3 py-2 disabled:opacity-40">Next</button></div>
       </details>
 
@@ -216,11 +312,18 @@ export function VerificationBanner({
         <button
           type="button"
           onClick={remind}
-          disabled={reminding}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-bold text-foreground hover:border-brand-500/40 disabled:opacity-50"
+          disabled={reminding || counts.blocked === 0}
+          title={counts.blocked === 0
+            ? 'Every clan has finished its review — there is nobody to remind'
+            : 'Writes only to the mentors of clans that still owe reviews, with their own outstanding count'}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-bold text-foreground hover:border-brand-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {reminding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
-          Remind mentors
+          {/* Saying who it reaches: the button read "Remind mentors" and people
+              reasonably assumed it mailed all of them. */}
+          {counts.blocked === 0
+            ? 'Nobody to remind'
+            : `Remind mentors of ${counts.blocked} unfinished clan${counts.blocked === 1 ? '' : 's'}`}
         </button>
         {onIssueAnyway && (
           <button

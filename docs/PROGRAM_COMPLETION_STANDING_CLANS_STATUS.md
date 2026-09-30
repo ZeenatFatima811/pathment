@@ -29,14 +29,14 @@ This report distinguishes implemented code from behavior that has been verified.
 
 1. **Browser end-to-end walkthrough** of admin close/reopen, mentor historical vs standing switching, schedule/calendar journeys, and full submission/review flows.
 2. **Rerun** admin-program, clan-permission and multi-clan regression suites after the latest service changes.
-3. **Apply migration `116_certificate_inactive_decision`** (and any earlier completion migrations) to non-test environments when ready; verify ambiguous legacy blocker/delay clan backfills and programs marked completed without a formal close.
+3. **Apply migration `117_certificate_inactive_decision`** (and any earlier completion migrations) to non-test environments when ready; verify ambiguous legacy blocker/delay clan backfills and programs marked completed without a formal close.
 4. **Actual email delivery** remains unverified (tests logged an email-mock limitation).
 
 ## Implemented backend work (latest additions)
 
 - Clan-scoped `getCohort`, `getPeriodActivity`, `generateReportSummary` and `getMenteeDetail` via `X-Active-Clan` / `requestedClanId`.
 - Standing clans use direct clan task filters; cohort/all views keep standing work out of program metrics.
-- Explicit certificate decision `inactive` → enrollment outcome `dropped` on close (migration 116).
+- Explicit certificate decision `inactive` → enrollment outcome `dropped` on close (migration 117).
 - Friction resolve/accept/reject/delete assert access to the record's clan.
 - `canViewMentee` accepts optional `clanId` so profile access cannot ride another shared clan.
 
@@ -52,8 +52,9 @@ This report distinguishes implemented code from behavior that has been verified.
 | --- | --- |
 | Latest completion/standing integration suite | Previously passed 18/18; inactive classification test added — rerun required after this pass |
 | Frontend TypeScript check | Rerun required after this pass |
-| Migration 115 (completion/standing) | Applied to the test database earlier |
-| Migration 116 (inactive decision) | Added; apply before using inactive decisions |
+| Migration 116 (completion/standing) | Applied to the test database earlier |
+| Migration 117 (inactive decision) | Added; apply before using inactive decisions |
+| Migration 118 (plan feature flag) | Added; gates closeout/standing to Growth/Scale |
 | Browser/end-to-end walkthrough | Not performed |
 | Production deployment/migration | Not performed |
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { AWARDED_CERTIFICATES, NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -468,10 +469,15 @@ export default function MentorCertificatesPage() {
         switch (reviewFilter) {
           case 'pending':  return !row || row.status !== 'verified';
           case 'verified': return row?.status === 'verified';
+          // Stage, not status: 'verified' cannot tell these two apart.
+          case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
+          case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
           case 'changed':  return Boolean(row?.overridden);
-          // "Approved to send" is a property of the clan, not the person: the
-          // admin releases a clan, and everyone in it becomes sendable.
-          case 'sendable': return (release ?? []).some(c => c.clanId === m.clanId && c.canSend);
+          // Sendable needs BOTH: the admin has released the clan, and this
+          // person's own grade is signed off. The clan alone was not enough —
+          // the server refuses an unreviewed grade whoever asks.
+          case 'sendable': return row?.status === 'verified'
+            && (release ?? []).some(c => c.clanId === m.clanId && c.canSend);
           default: return true;
         }
       });

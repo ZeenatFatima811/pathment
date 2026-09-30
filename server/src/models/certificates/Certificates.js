@@ -90,6 +90,26 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'pending',
       validate: { isIn: [['pending', 'verified']] }
     },
+    /**
+     * How far this review has actually got. `status` answers only "has somebody
+     * signed off", and a mentor's sign-off and an admin's both wrote 'verified'
+     * — so an admin working through a whole cohort saw the same badge on their
+     * own decisions as on everyone else's, and could not tell them apart.
+     *
+     *   ai_evaluated     the AI graded it; no human has been asked yet
+     *   awaiting_mentor  sent to the clans, nobody has signed off
+     *   mentor_verified  a mentor signed off
+     *   admin_approved   an admin signed off the row, or released its clan
+     *
+     * `status` is kept in sync ('verified' for the last two) so existing
+     * queries keep working; this is the richer fact on top, not a replacement.
+     */
+    stage: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'awaiting_mentor',
+      allowNull: false,
+      validate: { isIn: [['ai_evaluated', 'awaiting_mentor', 'mentor_verified', 'admin_approved']] }
+    },
     verifiedBy: { type: DataTypes.UUID, field: 'verified_by' },
     verifiedAt: { type: DataTypes.DATE, field: 'verified_at' }
   }, { tableName: 'certificate_verifications', underscored: true });
