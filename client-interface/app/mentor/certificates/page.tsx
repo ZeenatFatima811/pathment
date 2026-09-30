@@ -21,6 +21,7 @@ import { Drawer } from '@/components/shared/Drawer';
 import { MenteeEvidenceDrawer, RecipientRosterTable, CertificatePreview, RosterFilterBar, type CertificateRenderData, type ReviewFilter, type RosterSort } from '@/components/certificates/shared';
 import { scopeCertificateReviews } from '@/lib/utils/certificate-review-scope';
 import { downloadCertificateAsPng } from '@/lib/utils/certificate-renderer';
+import { CertificateTemplateCover } from '@/components/certificates/shared/CertificateTemplateCover';
 
 
 
@@ -962,15 +963,7 @@ export default function MentorCertificatesPage() {
                   key={t.id}
                   className="group bg-card border border-border hover:border-brand-500/30 rounded-2xl overflow-hidden shadow-2xs hover:shadow-sm transition-all flex flex-col"
                 >
-                  <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
-                    {t.bgImageUrl
-                      ? <img src={t.bgImageUrl} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" alt={t.name} />
-                      : <div className="w-full h-full flex items-center justify-center"><Award className="w-10 h-10 text-muted-foreground/30" /></div>
-                    }
-                    {t.logoUrl && (
-                      <img src={t.logoUrl} className="absolute top-3 right-3 w-7 h-7 rounded-full border border-white/60 bg-white object-contain shadow" alt="logo" />
-                    )}
-                  </div>
+                  <CertificateTemplateCover template={t} />
                   <div className="p-4 flex flex-col gap-3 flex-1">
                     <div>
                       <p className="text-sm font-bold text-foreground line-clamp-1">{t.name}</p>
