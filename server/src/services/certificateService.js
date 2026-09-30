@@ -155,7 +155,9 @@ class CertificateService {
    */
   async resolveMenteeScope(user, { programId = null, clanId = null } = {}) {
     if (!user) return [];
-    if (await authzService.hasAdminAccess(user)) return null;
+    // `actsAsAdmin`, not `hasAdminAccess`: in the mentor portal an admin gets a
+    // mentor's rows. See authzService.actsAsAdmin.
+    if (await authzService.actsAsAdmin(user)) return null;
 
     const clanIds = await this.getMentorScopedMenteeClans(user, programId, { clanId });
     if (!clanIds.length) return [];
@@ -205,7 +207,7 @@ class CertificateService {
     // Unrestricted ONLY for real admin access. Everyone else is confined to the
     // clans they mentor — and to none at all if they mentor none, which is the
     // safe answer rather than the whole programme.
-    const isAdmin = await authzService.hasAdminAccess(user);
+    const isAdmin = await authzService.actsAsAdmin(user);
 
     if (!isAdmin) {
       const clanIds = await this.getMentorScopedMenteeClans(user, programId, { clanId });
@@ -669,8 +671,9 @@ class CertificateService {
 
     const menteeIds = mentees.map(m => m.id);
 
-    // An admin run is programme-wide and carries no clan.
-    if (await authzService.hasAdminAccess(user)) {
+    // An admin run is programme-wide and carries no clan — but only from the
+    // admin portal; a run started on a mentor screen is that mentor's clans.
+    if (await authzService.actsAsAdmin(user)) {
       const { runId, total } = await this.enqueueEvaluation(
         id, menteeIds, user.id, criteria, null
       );
@@ -1256,7 +1259,7 @@ class CertificateService {
     // `user.role`, which says only what their account was created as — a
     // co-mentor promoted from a mentee account was falling past this branch
     // and listing every template in the org.
-    if (!(await authzService.hasAdminAccess(user))) {
+    if (!(await authzService.actsAsAdmin(user))) {
       const mentoredClanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
       const mentoredClans = mentoredClanIds.length
         ? await models.Clan.findAll({
@@ -1441,6 +1444,29 @@ class CertificateService {
 
   // ==================== ISSUANCE & QUEUE METHODS ====================
 
+  /**
+   * The tier to print, which is only ever the one a human signed off.
+   *
+   * The caller sends a tier along with the roster, and the two disagree
+   * whenever the roster was loaded before somebody changed a grade. The review
+   * wins. Where there is no reviewed tier at all there is nothing to print:
+   * this used to fall back to 'participation', and that fallback is how two
+   * mentees with no review row received a certificate.
+   *
+   * `blockedRecipients` refuses unreviewed mentees before issuance reaches
+   * here, so this throwing means that gate has a hole — better a failed batch
+   * than another round of certificates nobody confirmed.
+   */
+  _requireReviewedTier(verifiedTiers, menteeId, requestedTier, hasRound) {
+    if (verifiedTiers.has(menteeId)) return verifiedTiers.get(menteeId);
+    // No review round on this template: the caller's tier is the only grade
+    // there is, and issuing directly is a real workflow.
+    if (!hasRound) return requestedTier || 'participation';
+    throw new ValidationError(
+      'This certificate has no signed-off grade, so there is no tier to issue. Sign the grade off first.'
+    );
+  }
+
   async issueCertificates({ templateId, menteeIds, mentorId, tier, recipients }, userId, user = null) {
     if (!templateId) {
       throw new ValidationError('Template ID is required');
@@ -1481,19 +1507,6 @@ class CertificateService {
       // review round exists precisely so a human's correction is what gets
       // issued — an admin clicking Issue from a stale screen must not quietly
       // revert it to the AI's grade.
-      // A mentor may only SEND into a clan the admin has released. Verifying and
-      // sending are different steps: mentors check the grades as soon as they
-      // are asked, but the certificates go out when the admin says the cohort
-      // is ready. Admins are never gated.
-      const blocked = await certificateVerificationService.blockedRecipients(templateId, requested, user);
-      if (blocked.length) {
-        throw new ForbiddenError(
-          blocked.length === requested.length
-            ? 'These certificates have not been approved for release yet. An admin approves each clan once its grades are verified.'
-            : `${blocked.length} of these mentees are in a clan that has not been approved for release yet.`
-        );
-      }
-
       const verifiedTiers = await certificateVerificationService.resolveTiers(templateId, requested);
       const aiNoCertificateIds = new Set((template.aiEvaluation?.results || [])
         .filter(result => result.decision === 'no_certificate').map(result => result.mentee_id || result.id));
@@ -1518,6 +1531,41 @@ class CertificateService {
       const alreadyIssuedIds = new Set(alreadyIssued.map((r) => r.menteeId));
       const skippedNoCertificate = [...excludedIds].filter(id => !alreadyIssuedIds.has(id)).length;
 
+      /**
+       * Only now, and only over the people who would actually receive a
+       * certificate: somebody already holding one, or excluded by a
+       * No-certificate decision, is skipped rather than made to fail the batch.
+       *
+       * Two different refusals, so say which one this is — "nobody has reviewed
+       * them" and "the clan is not released yet" need opposite actions from
+       * whoever reads it, and the second used to be the only one reported. For
+       * an admin neither was: `hasAdminAccess` returned early from the gate, and
+       * one press of Issue sent 410 certificates of which 195 had never been
+       * reviewed.
+       *
+       * The review gate applies only where a round has actually been opened. A
+       * template that has never been reviewed has nothing to bypass, and
+       * issuing from it directly is a real workflow, not the defect.
+       */
+      const sendable = requested.filter((id) => !alreadyIssuedIds.has(id) && !excludedIds.has(id));
+      const hasRound = await certificateVerificationService.hasReviewRound(templateId, { transaction: t });
+      const { unreviewed, unapproved } = await certificateVerificationService
+        .sendBlockers(templateId, sendable, user, { transaction: t });
+      if (unreviewed.length) {
+        throw new ForbiddenError(
+          unreviewed.length === sendable.length
+            ? 'These grades have not been signed off yet, so there is nothing to send. A certificate is never issued on the AI\'s grade alone — sign the grades off first.'
+            : `${unreviewed.length} of these ${sendable.length} grades have not been signed off yet. Sign them off, or deselect them, before sending.`
+        );
+      }
+      if (unapproved.length) {
+        throw new ForbiddenError(
+          unapproved.length === sendable.length
+            ? 'These certificates have not been approved for release yet. An admin approves each clan once its grades are verified.'
+            : `${unapproved.length} of these mentees are in a clan that has not been approved for release yet.`
+        );
+      }
+
       let instancesData = [];
       if (Array.isArray(recipients) && recipients.length > 0) {
         instancesData = recipients.filter(r => !alreadyIssuedIds.has(r.menteeId) && !excludedIds.has(r.menteeId)).map(r => ({
@@ -1527,7 +1575,11 @@ class CertificateService {
           mentorId:  mentorId || null,
           issuedBy:  userId,
           imageUrl:  null,
-          tier:      verifiedTiers.get(r.menteeId) || r.tier || 'participation',
+          // No fallback: a tier is a reviewed decision, not a default. This
+          // read `|| 'participation'`, which handed a certificate to two people
+          // who had no review row at all. blockedRecipients now refuses them
+          // before this line; the throw is the backstop if it ever does not.
+          tier:      this._requireReviewedTier(verifiedTiers, r.menteeId, r.tier, hasRound),
           metadata:  {}
         }));
       } else {
@@ -1541,7 +1593,7 @@ class CertificateService {
           mentorId: mentorId || null,
           issuedBy: userId,
           imageUrl: null,
-          tier:     verifiedTiers.get(menteeId) || tier || 'participation',
+          tier:     this._requireReviewedTier(verifiedTiers, menteeId, tier, hasRound),
           metadata: {}
         }));
       }

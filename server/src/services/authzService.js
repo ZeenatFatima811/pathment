@@ -218,6 +218,31 @@ class AuthzService {
   }
 
   /**
+   * Is this person acting as an admin RIGHT NOW — for the purpose of scoping
+   * what data they get back?
+   *
+   * `hasAdminAccess` answers what somebody HOLDS, and must keep doing so: it
+   * feeds the role switcher, the admin-area guard and the cached
+   * `canAccessAdmin` the client stores per user. Narrowing that answer by
+   * portal locks an admin out of their own admin area, because the cache is
+   * keyed on the user and not the portal — the `false` fetched on a mentor
+   * screen is still there when they navigate to /admin.
+   *
+   * So the portal narrows the SCOPE instead. Somebody who is both an admin and
+   * a mentor, working in the mentor portal, gets a mentor's rows: their clans,
+   * not the organisation. They keep every ability; they just stop being handed
+   * everybody else's data on a screen that says "Viral Loop Clan 2026".
+   *
+   * That is what leaked — the mentor certificate roster listed all 28 clans and
+   * 622 mentees, with 592 selected for issuing.
+   */
+  async actsAsAdmin(user, opts = {}) {
+    const portalRole = getRequestContext().portalRole;
+    if (portalRole === 'mentor' || portalRole === 'mentee') return false;
+    return this.hasAdminAccess(user, opts);
+  }
+
+  /**
    * The platform "areas" a user may currently enter — the role-switcher list.
    * DERIVED from real facts on every read (never a stored array), so granting or
    * revoking a clan role / RoleAssignment / enrollment flips the switch

@@ -778,7 +778,7 @@ class ClanService {
     const { Op } = require('sequelize');
     const direct = await models.ClanMembership.findAll({
       where: { userId, status: 'active' },
-      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name', 'programId', 'status', 'avatarUrl'] }],
+      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name', 'programId', 'status'] }],
       order: [['joinedAt', 'DESC']]
     });
     const out = direct.map((m) => m.toJSON());
@@ -795,7 +795,7 @@ class ClanService {
     if (missingClanIds.length) {
       const clans = await models.Clan.findAll({
         where: { id: { [Op.in]: missingClanIds } },
-        attributes: ['id', 'name', 'programId', 'status', 'avatarUrl'],
+        attributes: ['id', 'name', 'programId', 'status'],
       });
       const clanById = new Map(clans.map((c) => [c.id, c.toJSON()]));
       for (const g of grants) {

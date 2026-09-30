@@ -8,6 +8,7 @@ import { certificatesApi, CertificateTemplate } from '@/lib/services/certificate
 import { ConfirmModal } from '@/components/shared';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { programsApi } from '@/lib/services/program-api';
+import { CertificateTemplateCover } from '@/components/certificates/shared/CertificateTemplateCover';
 
 export default function AdminCertificatesPage() {
   const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
@@ -144,26 +145,7 @@ export default function AdminCertificatesPage() {
                 className="group bg-card border border-border hover:border-brand-500/20 hover:shadow-md rounded-2xl overflow-hidden shadow-3xs transition-all duration-300 flex flex-col hover:-translate-y-0.5"
               >
                 {/* Card Image Preview */}
-                <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
-                  {template.bgImageUrl ? (
-                    <img 
-                      src={template.bgImageUrl} 
-                      className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" 
-                      alt="Certificate Background" 
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                      <Award className="w-10 h-10" />
-                    </div>
-                  )}
-                  {template.logoUrl && (
-                    <img 
-                      src={template.logoUrl} 
-                      className="absolute top-4 right-4 w-8 h-8 rounded-full border border-white/50 object-contain shadow-sm bg-white" 
-                      alt="Logo" 
-                    />
-                  )}
-                </div>
+                <CertificateTemplateCover template={template} />
 
                 {/* Card Content */}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">

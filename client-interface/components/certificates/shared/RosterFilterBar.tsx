@@ -7,7 +7,21 @@ import type { ReviewerClanState } from '@/lib/services/certificates-api';
 import type { TierCriteria } from '@/components/admin/certificates/certificate-constants';
 
 /** How far through the review round a recipient is. */
-export type ReviewFilter = 'all' | 'pending' | 'verified' | 'changed' | 'sendable';
+export type ReviewFilter =
+  | 'all'
+  | 'pending'
+  // The two that 'verified' used to hide behind one word. An admin who has just
+  // worked through a cohort needs to separate their own approvals from the
+  // mentor sign-offs still waiting on them — that was impossible to filter for.
+  | 'mentor_verified'
+  | 'admin_approved'
+  // Not a stage — the grade does not move while a question is open. It is its
+  // own fact, and the admin needs to find these.
+  | 'questioned'
+  | 'change_requested'
+  | 'verified'
+  | 'changed'
+  | 'sendable';
 export type RosterSort = 'none' | 'score_desc' | 'score_asc';
 
 interface RosterFilterBarProps {
@@ -113,11 +127,15 @@ export function RosterFilterBar({
             value={review}
             onChange={(v) => onReview(v as ReviewFilter)}
             options={[
-              { value: 'all',      label: 'Any review state' },
-              { value: 'pending',  label: 'Awaiting sign-off' },
-              { value: 'verified', label: 'Signed off' },
-              { value: 'changed',  label: 'Changed by a mentor' },
-              { value: 'sendable', label: 'Approved to send' },
+              { value: 'all',             label: 'Any review state' },
+              { value: 'pending',         label: 'Awaiting mentor' },
+              { value: 'mentor_verified', label: 'Mentor verified — waiting on an admin' },
+              { value: 'admin_approved',  label: 'Approved by an admin' },
+              { value: 'questioned',      label: 'Questioned — awaiting the mentor' },
+              { value: 'change_requested', label: 'Change requested — awaiting you' },
+              { value: 'verified',        label: 'Signed off — either' },
+              { value: 'changed',         label: 'Changed by a mentor' },
+              { value: 'sendable',        label: 'Approved by admin — cleared to send' },
             ]}
             ariaLabel="Filter by review state"
             className="w-full"

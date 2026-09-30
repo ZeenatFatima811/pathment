@@ -12,7 +12,6 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { formatRelativeTime } from '@/lib/utils/date';
 import Link from 'next/link';
 import { ClanAvatarEditor } from '@/components/shared/ClanAvatarEditor';
-import { PERMISSIONS } from '@/lib/config/permissions';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { CoMentorPermissionsDrawer } from '@/components/shared/CoMentorPermissionsDrawer';
@@ -122,7 +121,6 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
   const [permMember, setPermMember] = useState<Member | null>(null);
   const [canManageTeam, setCanManageTeam] = useState(myRole === 'lead_mentor');
   const [canAddMentees, setCanAddMentees] = useState(myRole === 'lead_mentor');
-  const [canEditClanAvatar, setCanEditClanAvatar] = useState(myRole === 'lead_mentor');
   const confirm = useConfirm();
 
   const [isEditingLink, setIsEditingLink] = useState(false);
@@ -143,11 +141,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
         if (access) {
           setCanManageTeam(Boolean(access.canManageTeam));
           setCanAddMentees(Boolean(access.canAddMentees));
-          setCanEditClanAvatar(access.permissions?.includes(PERMISSIONS.CLAN_AVATAR_MANAGE) ?? false);
         } else {
           setCanManageTeam(myRole === 'lead_mentor');
           setCanAddMentees(myRole === 'lead_mentor');
-          setCanEditClanAvatar(myRole === 'lead_mentor');
         }
       })
       .catch(() => toast.error('Could not load clan'))
@@ -261,7 +257,7 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-card p-5">
-      <div className="mb-4"><ClanAvatarEditor clanId={clanId} name={clan.name} avatarUrl={clan.avatarUrl} canEdit={canEditClanAvatar} onChanged={load} /></div>
+      <div className="mb-4"><ClanAvatarEditor clanId={clanId} name={clan.name} avatarUrl={clan.avatarUrl} onChanged={load} /></div>
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold text-slate-900">{clan.name}</h2>

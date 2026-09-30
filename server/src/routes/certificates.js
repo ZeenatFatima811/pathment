@@ -198,6 +198,92 @@ router.delete(
   certificateController.revokeClanApproval
 );
 
+// Certificates that went out without a sign-off, and taking them back.
+//
+// Separate from `DELETE /templates/:id/instances`, which revokes EVERYTHING the
+// template issued — no use when 215 of 410 were signed off correctly and only
+// the rest have to go. Admin only: it is a real delete and the recipients are
+// not notified.
+router.get(
+  '/templates/:id/unreviewed-issued',
+  authenticate,
+  authorize(['admin']),
+  certificateController.unreviewedIssued
+);
+
+router.delete(
+  '/templates/:id/unreviewed-issued',
+  authenticate,
+  authorize(['admin']),
+  certificateController.revokeUnreviewed
+);
+
+// Asking a mentor to explain a grade, and their answer.
+//
+// The ask is admin-only; the answer is the mentor's, so it is authorised inside
+// the service against the person the question was addressed to rather than by
+// role here — a lead covering for someone who has left must still be able to
+// close it.
+router.get(
+  '/templates/:id/questions',
+  authenticate,
+  authorize(['admin', 'mentor']),
+  certificateController.listQuestions
+);
+
+router.post(
+  '/templates/:id/verifications/:menteeId/question',
+  authenticate,
+  authorize(['admin']),
+  certificateController.askMentor
+);
+
+router.post(
+  '/questions/:questionId/answer',
+  authenticate,
+  authorize(['admin', 'mentor']),
+  certificateController.answerQuestion
+);
+
+router.delete(
+  '/questions/:questionId',
+  authenticate,
+  authorize(['admin']),
+  certificateController.withdrawQuestion
+);
+
+// A mentor asking to change a grade an admin has already approved, and the
+// admin's decision on it. Approving applies the change as the admin's own.
+router.post(
+  '/templates/:id/verifications/:menteeId/change-request',
+  authenticate,
+  authorize(['mentor', 'admin']),
+  certificateController.requestChange
+);
+
+router.post(
+  '/questions/:questionId/resolve',
+  authenticate,
+  authorize(['admin']),
+  certificateController.resolveChangeRequest
+);
+
+// A mentor asking an admin for the certificate report for their clan.
+router.post(
+  '/templates/:id/report-request',
+  authenticate,
+  authorize(['mentor', 'admin']),
+  certificateController.requestReport
+);
+
+// Chase one mentee's mentors, rather than every unfinished clan.
+router.post(
+  '/templates/:id/verifications/:menteeId/notify-mentor',
+  authenticate,
+  authorize(['admin']),
+  certificateController.notifyMentorsForMentee
+);
+
 // Re-open / re-notify the round, optionally moving the deadline.
 router.post(
   '/templates/:id/verifications-remind',

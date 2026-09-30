@@ -172,13 +172,20 @@ const verificationSummary = catchAsync(async (req, res) => {
 });
 
 const remindReviewers = catchAsync(async (req, res) => {
-  const template = await certificateService.getTemplate(req.params.id);
-  const result = await certificateVerificationService.open(
+  // Notify only. This used to re-open the round from the AI results, which
+  // rewrote pending grades and dropped clan approvals — a reminder must not
+  // change a single decision.
+  const result = await certificateVerificationService.remindReviewers(
     req.params.id,
-    (template.aiEvaluation?.results) || [],
-    { deadline: req.body.deadline || null }
+    { deadline: req.body?.deadline || null },
+    req.user
   );
-  res.status(200).json(successResponse(`Reminded ${result.notified} mentor(s)`, result));
+  res.status(200).json(successResponse(
+    result.notified
+      ? `Reminded ${result.notified} mentor(s) across ${result.clans} clan(s) — ${result.outstanding} review(s) outstanding`
+      : 'Nobody to remind — every grade has been reviewed',
+    result
+  ));
 });
 
 
@@ -194,6 +201,93 @@ const revokeClanApproval = catchAsync(async (req, res) => {
     req.params.id, req.params.clanId, req.user
   );
   res.status(200).json(successResponse('Clan approval withdrawn', result));
+});
+
+/**
+ * What this template issued without anyone signing it off. Read-only, so the
+ * admin sees exactly who is affected before choosing to revoke.
+ */
+const unreviewedIssued = catchAsync(async (req, res) => {
+  const certificates = await certificateVerificationService.unreviewedIssued(req.params.id);
+  res.status(200).json(successResponse(
+    `${certificates.length} certificate(s) were issued without a signed-off grade`,
+    { count: certificates.length, certificates }
+  ));
+});
+
+const revokeUnreviewed = catchAsync(async (req, res) => {
+  const result = await certificateVerificationService.revokeUnreviewed(req.params.id, req.user);
+  res.status(200).json(successResponse(
+    result.revoked
+      ? `Revoked ${result.revoked} certificate(s) that had no signed-off grade`
+      : 'Nothing to revoke — every issued certificate has a signed-off grade',
+    result
+  ));
+});
+
+// ── Questioning a mentor's grade ────────────────────────────────────────────
+
+const askMentor = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.askMentor(
+    req.params.id, req.params.menteeId, req.body?.question, req.user
+  );
+  res.status(201).json(successResponse('Question sent to the mentor', { question }));
+});
+
+const answerQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.answerQuestion(
+    req.params.questionId, req.body?.answer, req.user
+  );
+  res.status(200).json(successResponse('Answer sent', { question }));
+});
+
+const withdrawQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.withdrawQuestion(req.params.questionId, req.user);
+  res.status(200).json(successResponse('Question withdrawn', { question }));
+});
+
+const listQuestions = catchAsync(async (req, res) => {
+  const questions = await certificateVerificationService.listQuestions(req.params.id, {
+    menteeId: req.query.menteeId || null,
+    openOnly: String(req.query.openOnly || '') === 'true'
+  });
+  res.status(200).json(successResponse('Questions retrieved', { questions, count: questions.length }));
+});
+
+const notifyMentorsForMentee = catchAsync(async (req, res) => {
+  const result = await certificateVerificationService.notifyMentorsForMentee(
+    req.params.id, req.params.menteeId, { note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    `Notified ${result.notified} mentor(s) in ${result.clanName || 'the clan'}`, result
+  ));
+});
+
+/** The mentor's way forward once an admin has approved a grade. */
+const requestChange = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestChange(
+    req.params.id, req.params.menteeId,
+    { finalTier: req.body?.finalTier, decision: req.body?.decision, reason: req.body?.reason },
+    req.user
+  );
+  res.status(201).json(successResponse('Change request sent to the admins', { request }));
+});
+
+const resolveChangeRequest = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.resolveChangeRequest(
+    req.params.questionId, { approve: req.body?.approve === true, note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    request.resolution === 'approved' ? 'Change approved and applied' : 'Change request declined',
+    { request }
+  ));
+});
+
+const requestReport = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestReport(
+    req.params.id, { clanId: req.body?.clanId, note: req.body?.note }, req.user
+  );
+  res.status(201).json(successResponse('Report requested from the admins', { request }));
 });
 
 module.exports = {
@@ -223,5 +317,15 @@ module.exports = {
   remindReviewers,
   sendToClans,
   approveClan,
-  revokeClanApproval
+  revokeClanApproval,
+  unreviewedIssued,
+  revokeUnreviewed,
+  askMentor,
+  answerQuestion,
+  withdrawQuestion,
+  listQuestions,
+  notifyMentorsForMentee,
+  requestChange,
+  resolveChangeRequest,
+  requestReport
 };

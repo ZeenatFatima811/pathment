@@ -12,7 +12,7 @@ export function MentorWorkspaceTabs() {
   const workspace = mentorWorkspaces.find((group) =>
     group.tabs.some((tab) => matchesMentorPath(pathname, tab.href)),
   );
-  if (!workspace) return null;
+  if (!workspace || workspace.label === 'My mentees') return null;
   return (
     <div className="mb-7">
       <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">

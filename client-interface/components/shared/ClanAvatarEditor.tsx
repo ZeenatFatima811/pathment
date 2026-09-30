@@ -9,13 +9,11 @@ export function ClanAvatarEditor({
   clanId,
   name,
   avatarUrl,
-  canEdit = true,
   onChanged,
 }: {
   clanId: string;
   name: string;
   avatarUrl?: string | null;
-  canEdit?: boolean;
   onChanged: (avatarUrl: string | null) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -58,39 +56,40 @@ export function ClanAvatarEditor({
     <div className="flex flex-wrap items-center gap-3 rounded-2xl border bg-muted/30 p-4">
       <Avatar name={name} src={avatarUrl} size="lg" />
       <div className="flex-1">
-        <p className="text-sm font-medium">Clan photo</p>
-        {canEdit && <>
-          <p className="mt-1 text-xs text-muted-foreground">
-            PNG, JPG or WebP · up to 5 MB. Initials appear when no photo is set.
-          </p>
-          <div className="mt-2 flex gap-3">
+        <p className="text-sm font-medium">
+          Clan photo{" "}
+          <span className="font-normal text-muted-foreground">· optional</span>
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          PNG, JPG or WebP · up to 5 MB. Initials appear when no photo is set.
+        </p>
+        <div className="mt-2 flex gap-3">
+          <button
+            disabled={busy}
+            onClick={() => input.current?.click()}
+            className="text-sm font-medium text-brand-700 disabled:opacity-50"
+          >
+            {busy ? "Updating…" : avatarUrl ? "Change photo" : "Add photo"}
+          </button>
+          {avatarUrl && (
             <button
               disabled={busy}
-              onClick={() => input.current?.click()}
-              className="text-sm font-medium text-brand-700 disabled:opacity-50"
+              onClick={remove}
+              className="text-sm text-muted-foreground disabled:opacity-50"
             >
-              {busy ? "Updating…" : avatarUrl ? "Change photo" : "Add photo"}
+              Remove
             </button>
-            {avatarUrl && (
-              <button
-                disabled={busy}
-                onClick={remove}
-                className="text-sm text-muted-foreground disabled:opacity-50"
-              >
-                Remove
-              </button>
-            )}
-          </div>
-        </>}
+          )}
+        </div>
       </div>
-      {canEdit && <input
-          ref={input}
-          aria-label="Upload clan photo"
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={(event) => upload(event.target.files?.[0])}
-        />}
+      <input
+        ref={input}
+        aria-label="Upload clan photo"
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(event) => upload(event.target.files?.[0])}
+      />
     </div>
   );
 }

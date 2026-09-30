@@ -1,5 +1,6 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { AWARDED_CERTIFICATES, NO_CERTIFICATE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -7,7 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   Loader2, Award, Calendar, ArrowLeft, Users, Send, Eye, CheckCircle2, XCircle, AlertCircle,
   TrendingUp, Download, Linkedin, ShieldCheck, X, Info,
-  Sparkles, Edit3, Clock, Lock
+  Sparkles, Edit3, Clock, Lock, FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/context/AuthContext';
@@ -20,6 +21,7 @@ import { Drawer } from '@/components/shared/Drawer';
 import { MenteeEvidenceDrawer, RecipientRosterTable, CertificatePreview, RosterFilterBar, type CertificateRenderData, type ReviewFilter, type RosterSort } from '@/components/certificates/shared';
 import { scopeCertificateReviews } from '@/lib/utils/certificate-review-scope';
 import { downloadCertificateAsPng } from '@/lib/utils/certificate-renderer';
+import { CertificateTemplateCover, CertificateTemplateGallery } from '@/components/certificates/shared/CertificateTemplateCover';
 
 
 
@@ -97,6 +99,7 @@ export default function MentorCertificatesPage() {
   const [search, setSearch] = useState('');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [clanFilter, setClanFilter] = useState('all');
+  const [requestingReport, setRequestingReport] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
   const [sortBy, setSortBy] = useState<RosterSort>('none');
   const [personalNote, setPersonalNote] = useState('');
@@ -467,10 +470,17 @@ export default function MentorCertificatesPage() {
         switch (reviewFilter) {
           case 'pending':  return !row || row.status !== 'verified';
           case 'verified': return row?.status === 'verified';
+          // Stage, not status: 'verified' cannot tell these two apart.
+          case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
+          case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
+          case 'questioned':      return Boolean(row?.hasOpenQuestion);
+          case 'change_requested': return Boolean(row?.hasChangeRequest);
           case 'changed':  return Boolean(row?.overridden);
-          // "Approved to send" is a property of the clan, not the person: the
-          // admin releases a clan, and everyone in it becomes sendable.
-          case 'sendable': return (release ?? []).some(c => c.clanId === m.clanId && c.canSend);
+          // Sendable needs BOTH: the admin has released the clan, and this
+          // person's own grade is signed off. The clan alone was not enough —
+          // the server refuses an unreviewed grade whoever asks.
+          case 'sendable': return row?.status === 'verified'
+            && (release ?? []).some(c => c.clanId === m.clanId && c.canSend);
           default: return true;
         }
       });
@@ -953,15 +963,7 @@ export default function MentorCertificatesPage() {
                   key={t.id}
                   className="group bg-card border border-border hover:border-brand-500/30 rounded-2xl overflow-hidden shadow-2xs hover:shadow-sm transition-all flex flex-col"
                 >
-                  <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
-                    {t.bgImageUrl
-                      ? <img src={t.bgImageUrl} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" alt={t.name} />
-                      : <div className="w-full h-full flex items-center justify-center"><Award className="w-10 h-10 text-muted-foreground/30" /></div>
-                    }
-                    {t.logoUrl && (
-                      <img src={t.logoUrl} className="absolute top-3 right-3 w-7 h-7 rounded-full border border-white/60 bg-white object-contain shadow" alt="logo" />
-                    )}
-                  </div>
+                  <CertificateTemplateCover template={t} />
                   <div className="p-4 flex flex-col gap-3 flex-1">
                     <div>
                       <p className="text-sm font-bold text-foreground line-clamp-1">{t.name}</p>
@@ -1109,21 +1111,8 @@ export default function MentorCertificatesPage() {
       {}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-5 mb-6">
         {}
-        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Certificate Template</p>
-              <h3 className="text-sm font-bold text-foreground mt-0.5">{currentTemplate?.name || 'Certificate Template'}</h3>
-            </div>
-            {currentTemplate?.bgImageUrl && (
-              <span className="px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-600 text-[10px] font-bold">Active</span>
-            )}
-          </div>
-          {currentTemplate?.bgImageUrl && (
-            <div className="aspect-[2.4] rounded-2xl overflow-hidden border border-border/80 bg-muted/20">
-              <img src={currentTemplate.bgImageUrl} className="w-full h-full object-cover" alt="Preview" />
-            </div>
-          )}
+        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs">
+          {currentTemplate ? <CertificateTemplateGallery template={currentTemplate} /> : null}
         </div>
 
         {}
@@ -1176,6 +1165,34 @@ export default function MentorCertificatesPage() {
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Review your mentees’ grades and sign off. Send certificates after admin approval.</p>
               </div>
+
+              {/* Reports are an admin surface; a mentor who wants one had no way
+                  to say so. This asks — the admin still sends it. */}
+              {activeTemplateId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!activeTemplateId) return;
+                    try {
+                      setRequestingReport(true);
+                      const res = await certificatesApi.requestCertificateReport(activeTemplateId, {
+                        clanId: clanFilter !== 'all' ? clanFilter : undefined,
+                      });
+                      toast.success(res.message || 'Report requested');
+                    } catch (err) {
+                      toast.error(extractApiErrorMessage(err, 'Could not request the report'));
+                    } finally {
+                      setRequestingReport(false);
+                    }
+                  }}
+                  disabled={requestingReport}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-bold text-foreground hover:border-brand-500/40 disabled:opacity-50"
+                  title="Ask an admin to send you the certificate report for your clan"
+                >
+                  {requestingReport ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                  Request report
+                </button>
+              )}
 
             </div>
 

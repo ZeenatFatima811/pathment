@@ -1,8 +1,9 @@
 'use client';
 
+import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { NO_CERTIFICATE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
 import React from 'react';
-import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock } from 'lucide-react';
+import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock, MessageCircleQuestion } from 'lucide-react';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
 import { TierCriteria } from '@/components/admin/certificates/certificate-constants';
 
@@ -24,6 +25,12 @@ export interface RosterReviewState {
   overrideReason: string | null;
   verifiedBy: string | null;
   verifiedAt?: string | null;
+  /** How far the review got — a mentor's check or an admin's approval. */
+  stage?: string | null;
+  /** An admin has queried this grade and the mentor has not answered yet. */
+  hasOpenQuestion?: boolean;
+  /** A mentor has asked an admin to change this approved grade. */
+  hasChangeRequest?: boolean;
 }
 
 export interface RecipientRosterTableProps {
@@ -302,6 +309,25 @@ function ReviewNote({
         </span>
       );
     }
+    if (review.hasChangeRequest) {
+      // The grade stands; a mentor has asked an admin to move it.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · change requested
+        </span>
+      );
+    }
+    if (review.hasOpenQuestion) {
+      // The grade stands; what is outstanding is the mentor's explanation. Said
+      // on the row so an admin can see at a glance which ones they have queried.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · question sent
+        </span>
+      );
+    }
     return (
       <span
         className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5"
@@ -310,7 +336,9 @@ function ReviewNote({
         <CheckCircle2 className="w-2.5 h-2.5" />
         {review.overridden
           ? `Changed by ${review.verifiedBy || 'mentor'} · ${getTierName(review.aiDecision === 'no_certificate' ? NO_CERTIFICATE : review.aiTier || '')} → ${getTierName(reviewSelection(review))}`
-          : `Signed off${review.verifiedBy ? ` by ${review.verifiedBy}` : ''}`}
+          // "Signed off by X" read the same whoever X was. Naming the stage is
+          // what lets an admin scan the roster for their own approvals.
+          : `${reviewStage(review).label}${review.verifiedBy ? ` · ${review.verifiedBy}` : ''}`}
       </span>
     );
   }

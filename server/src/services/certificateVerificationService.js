@@ -91,7 +91,8 @@ class CertificateVerificationService {
             overrideReason: aiDecision === 'no_certificate' ? result.reasoning : null,
             aiMatchScore,
             finalTier: aiTier,
-            status: 'pending'
+            status: 'pending',
+            stage: 'awaiting_mentor'
           }, { transaction });
           created += 1;
           continue;
@@ -165,7 +166,8 @@ class CertificateVerificationService {
     if (!template) throw new NotFoundError('Certificate template not found');
 
     const where = { templateId };
-    const isAdmin = await authzService.hasAdminAccess(user);
+    // The roster that leaked: an admin on a MENTOR screen was handed every clan.
+    const isAdmin = await authzService.actsAsAdmin(user);
     if (!isAdmin) {
       const clanIds = await this._reviewableClanIds(user, template.programId, clanId);
       if (!clanIds.length) return { template: this._templateSummary(template), rows: [], clans: [] };
@@ -208,9 +210,17 @@ class CertificateVerificationService {
       };
     });
 
+    // Open threads travel with the rows, so the roster can show what is under
+    // query or awaiting a decision without a request per mentee.
+    const { questioned, changeRequested } = await this.openThreads(templateId);
+
     return {
       template: this._templateSummary(template),
-      rows: rows.map((r) => this._serialize(r)),
+      rows: rows.map((r) => ({
+        ...this._serialize(r),
+        hasOpenQuestion: questioned.has(r.menteeId),
+        hasChangeRequest: changeRequested.has(r.menteeId)
+      })),
       clans: clanState
     };
   }
@@ -232,8 +242,30 @@ class CertificateVerificationService {
       const row = await models.CertificateVerification.findOne({ where: { templateId, menteeId }, transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('There is nothing to verify for this mentee');
       await this._assertCanReview(user, row);
-      if (!(await authzService.hasAdminAccess(user)) && row.clanId && await models.CertificateClanApproval.findOne({ where: { templateId, clanId: row.clanId }, transaction })) {
-        throw new ForbiddenError('These certificate decisions are approved. Only an admin can change them.');
+      /**
+       * A mentor edits freely until an admin approves, and not after.
+       *
+       * Before approval their sign-off is their own working decision and they
+       * should be able to correct it without ceremony. Once an admin has
+       * approved it, it is the admin's call and the mentor asks instead —
+       * `requestChange` is the way forward, so the refusal names it rather than
+       * leaving them at a dead end.
+       *
+       * The stage check is free and covers the common case: `approveClan`
+       * stamps every verified row it releases to `admin_approved`, so the
+       * approval-table query below only runs for rows that joined the clan
+       * after it was released.
+       */
+      if (!(await authzService.hasAdminAccess(user))) {
+        const lockedByAdmin = row.stage === 'admin_approved';
+        const lockedByClan = !lockedByAdmin && row.clanId && await models.CertificateClanApproval.findOne({
+          where: { templateId, clanId: row.clanId }, transaction, attributes: ['id']
+        });
+        if (lockedByAdmin || lockedByClan) {
+          throw new ForbiddenError(
+            'An admin has approved this grade, so it can no longer be edited directly. Request a change and an admin will decide.'
+          );
+        }
       }
 
       const aiDecision = row.aiDecision === 'no_certificate' ? 'no_certificate' : (row.aiTier ? 'award' : 'undecided');
@@ -268,6 +300,28 @@ class CertificateVerificationService {
       row.overridden = overridden;
       row.overrideReason = decisionReason;
       row.status = 'verified';
+      // An admin's sign-off is also the approval; a mentor's is only the check.
+      // Writing one 'verified' for both is what left an admin unable to tell
+      // their own four hundred decisions from everybody else's.
+      //
+      // The stage does not go BACKWARDS on an unchanged grade. A mentor working
+      // through their queue after the admin had already approved a row used to
+      // rewrite it to 'mentor_verified', quietly un-approving work the admin had
+      // done — so an admin who approved a batch came back to find only some of
+      // it still showing as theirs. A mentor re-confirming the same grade leaves
+      // the approval standing; a mentor who actually CHANGES it drops the row
+      // back, because the admin approved the old grade, not the new one.
+      // `actsAsAdmin`, not `hasAdminAccess`: the stage records which hat was
+      // worn. An admin signing off on a MENTOR screen is doing a mentor's
+      // review — the button there says "sign off", and the record must agree
+      // with the button.
+      if (await authzService.actsAsAdmin(user)) {
+        row.stage = 'admin_approved';
+      } else if (row.stage === 'admin_approved' && !changed) {
+        row.stage = 'admin_approved';
+      } else {
+        row.stage = 'mentor_verified';
+      }
       row.verifiedBy = user.id;
       row.verifiedAt = new Date();
       await row.save({ transaction });
@@ -330,12 +384,15 @@ class CertificateVerificationService {
         byClan.set(key, {
           clanId: row.clanId || null,
           clanName: row.clan?.name || 'No clan',
-          total: 0, verified: 0, pending: 0, overridden: 0, noCertificate: 0
+          total: 0, verified: 0, pending: 0, overridden: 0, noCertificate: 0,
+          mentorVerified: 0, adminApproved: 0
         });
       }
       const bucket = byClan.get(key);
       bucket.total += 1;
       if (row.status === 'verified') bucket.verified += 1; else bucket.pending += 1;
+      if (row.stage === 'admin_approved') bucket.adminApproved += 1;
+      else if (row.stage === 'mentor_verified') bucket.mentorVerified += 1;
       if (row.overridden) bucket.overridden += 1;
       if (row.decision === 'no_certificate') bucket.noCertificate += 1;
     }
@@ -349,6 +406,8 @@ class CertificateVerificationService {
       readyToApprove: c.pending === 0 && !(c.clanId && approvedClans.has(c.clanId))
     }));
     const deadline = template.verificationDeadline || null;
+    // One read for all three open-thread counts below.
+    const openThreads = await this.openThreads(templateId);
 
     return {
       deadline,
@@ -359,6 +418,16 @@ class CertificateVerificationService {
       overridden: rows.filter((r) => r.overridden).length,
       noCertificate: rows.filter(r => r.decision === 'no_certificate').length,
       allVerified: rows.length > 0 && rows.every((r) => r.status === 'verified'),
+      // The split an admin actually needs: what they have approved themselves
+      // against what is still only a mentor's check waiting on them.
+      mentorVerified: rows.filter((r) => r.stage === 'mentor_verified').length,
+      adminApproved: rows.filter((r) => r.stage === 'admin_approved').length,
+      /** Grades an admin has queried and the mentor has not yet answered. */
+      questioned: openThreads.questioned.size,
+      /** Approved grades a mentor has asked to change, awaiting an admin. */
+      changeRequested: openThreads.changeRequested.size,
+      /** Clans whose mentor has asked for the certificate report. */
+      reportRequests: openThreads.reportRequests.length,
       approvedClans: clans.filter((c) => c.approved).length,
       awaitingApproval: clans.filter((c) => c.readyToApprove).length,
       clans: clans.sort((a, b) => a.clanName.localeCompare(b.clanName))
@@ -406,6 +475,13 @@ class CertificateVerificationService {
           note
         }
       });
+      // Releasing the clan is the admin's approval of what is in it. Without
+      // this the roster still said "mentor verified" on rows the admin had
+      // already cleared to send, which is the question they came to answer.
+      await models.CertificateVerification.update(
+        { stage: 'admin_approved' },
+        { where: { templateId, clanId, status: 'verified' }, transaction }
+      );
       return { approval, pending };
     });
 
@@ -438,27 +514,185 @@ class CertificateVerificationService {
   /**
    * May this user send certificates to these people right now?
    *
-   * Admins always may. Everyone else may only send into a clan the admin has
-   * released — which is the gate that was missing: a mentor could issue the
-   * moment the round opened, skipping the approval step entirely.
+   * Two separate gates, and they are not the same question:
+   *
+   *   1. Has this person's grade been signed off? Nobody may send a
+   *      certificate no human has confirmed — an admin included. This used to
+   *      return early for admins, so `hasAdminAccess` skipped every check;
+   *      combined with `resolveTiers` reading a pending row's tier, one press
+   *      of Issue sent 410 certificates of which 195 had never been reviewed.
+   *      An admin who wants to send an unreviewed grade signs it off first,
+   *      which takes one click and leaves their name on the decision.
+   *
+   *   2. Is the mentee's clan released? That one IS the admin's own call, so
+   *      admins are not gated by it: they may send into a clan they have not
+   *      formally released. Mentors may not — otherwise a mentor could issue
+   *      the moment the round opened, skipping approval entirely.
    *
    * Returns the mentee ids that must NOT be sent to, so the caller can report
    * precisely rather than refusing a whole batch.
    */
-  async blockedRecipients(templateId, menteeIds, user) {
-    if (!Array.isArray(menteeIds) || !menteeIds.length) return [];
-    if (await authzService.hasAdminAccess(user)) return [];
+  async sendBlockers(templateId, menteeIds, user, { transaction = null } = {}) {
+    const empty = { unreviewed: [], unapproved: [] };
+    if (!Array.isArray(menteeIds) || !menteeIds.length) return empty;
+    const isAdmin = await authzService.hasAdminAccess(user);
 
-    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['programId'] });
-    const clanOf = await this._clanOfMentees(menteeIds, template?.programId || null);
-    const approved = await this.approvedClanIds(templateId);
+    const unique = [...new Set(menteeIds.filter(Boolean))];
+    // Has this template ever been reviewed at all? If not there is nothing to
+    // bypass: a certificate with no review round is issued directly, and that is
+    // a real workflow rather than the defect. Gating it would break issuing from
+    // any template that never had an AI evaluation.
+    const hasRound = await this.hasReviewRound(templateId, { transaction });
 
-    return menteeIds.filter((menteeId) => {
+    const reviews = hasRound ? await models.CertificateVerification.findAll({
+      where: { templateId, menteeId: { [Op.in]: unique.length ? unique : [null] } },
+      attributes: ['menteeId', 'status'],
+      raw: true,
+      transaction
+    }) : [];
+    // Inside an open round, a mentee with no review row at all has certainly not
+    // been reviewed. Two such people were issued certificates off the hardcoded
+    // tier fallback, so absence is refused rather than defaulted.
+    const signedOff = new Set(reviews.filter((r) => r.status === 'verified').map((r) => r.menteeId));
+
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['programId'], transaction });
+    const clanOf = await this._clanOfMentees(unique, template?.programId || null);
+    const approved = isAdmin ? null : await this.approvedClanIds(templateId);
+
+    const out = { unreviewed: [], unapproved: [] };
+    for (const menteeId of unique) {
+      if (hasRound && !signedOff.has(menteeId)) { out.unreviewed.push(menteeId); continue; }
+      if (isAdmin) continue;
       const clanId = clanOf.get(menteeId);
       // A mentee with no clan cannot be released by clan, so only an admin can
       // send to them. Refusing here is the safe reading.
-      return !clanId || !approved.has(clanId);
+      if (!clanId || !approved.has(clanId)) out.unapproved.push(menteeId);
+    }
+    return out;
+  }
+
+  /** Has a review round been opened on this template? Row existence is the signal. */
+  async hasReviewRound(templateId, { transaction = null } = {}) {
+    return (await models.CertificateVerification.count({ where: { templateId }, transaction })) > 0;
+  }
+
+  /**
+   * Certificates this template has issued that no human ever signed off.
+   *
+   * The same two conditions the send gate uses, so a preview and the send path
+   * can never disagree: the template HAS a round, and this mentee's row is
+   * absent or not verified. A template with no round at all is issued from
+   * directly, on purpose, and none of its certificates are listed here.
+   *
+   * Read-only. `revokeUnreviewed` is what acts on it.
+   */
+  async unreviewedIssued(templateId, { transaction = null } = {}) {
+    if (!(await this.hasReviewRound(templateId, { transaction }))) return [];
+
+    const instances = await models.CertificateInstance.findAll({
+      where: { templateId },
+      attributes: ['id', 'menteeId', 'tier', 'certificateNumber', 'createdAt', 'organizationId'],
+      include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false }],
+      transaction
     });
+    if (!instances.length) return [];
+
+    const menteeIds = instances.map((row) => row.menteeId);
+    const reviews = await models.CertificateVerification.findAll({
+      where: { templateId, menteeId: { [Op.in]: menteeIds } },
+      attributes: ['menteeId', 'status', 'stage', 'finalTier', 'clanId'],
+      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }],
+      transaction
+    });
+    const reviewOf = new Map(reviews.map((row) => [row.menteeId, row]));
+
+    return instances
+      .filter((instance) => reviewOf.get(instance.menteeId)?.status !== 'verified')
+      .map((instance) => {
+        const review = reviewOf.get(instance.menteeId) || null;
+        return {
+          instanceId: instance.id,
+          menteeId: instance.menteeId,
+          menteeName: instance.mentee
+            ? `${instance.mentee.firstName || ''} ${instance.mentee.lastName || ''}`.trim()
+            : null,
+          menteeEmail: instance.mentee?.email || null,
+          clanId: review?.clanId || null,
+          clanName: review?.clan?.name || null,
+          tier: instance.tier,
+          certificateNumber: instance.certificateNumber,
+          issuedAt: instance.createdAt,
+          reviewStatus: review ? review.status : null,
+          reviewStage: review ? review.stage : null,
+          organizationId: instance.organizationId
+        };
+      });
+  }
+
+  /**
+   * Take those certificates back.
+   *
+   * `certificate_instances` is not paranoid, so this is a real delete: the row
+   * goes, and because `certificate_number` is unique per row a re-issued
+   * certificate gets a NEW number and the old public link stops resolving. The
+   * recipients are not told — the platform has no revocation notice — so this is
+   * deliberately an explicit admin action rather than anything automatic.
+   *
+   * Everything removed is written to the audit log in the SAME transaction
+   * first: if the record cannot be written, nothing is deleted.
+   *
+   * Revoking also unblocks the mentors. While an instance exists, `verify()`
+   * refuses to change the grade ("already issued"); once it is gone the round
+   * can be reviewed properly and re-issued.
+   */
+  async revokeUnreviewed(templateId, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can revoke certificates that were issued without a sign-off');
+    }
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['id', 'name'] });
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    return sequelize.transaction(async (transaction) => {
+      const targets = await this.unreviewedIssued(templateId, { transaction });
+      if (!targets.length) return { revoked: 0, certificates: [] };
+
+      const byOrg = new Map();
+      for (const row of targets) {
+        if (!byOrg.has(row.organizationId)) byOrg.set(row.organizationId, []);
+        byOrg.get(row.organizationId).push(row);
+      }
+      for (const [organizationId, rows] of byOrg.entries()) {
+        await models.AuditLog.create({
+          organizationId,
+          userId: user.id,
+          action: 'certificate.revoked_unreviewed',
+          entityType: 'CertificateTemplate',
+          entityId: templateId,
+          oldValues: {
+            reason: 'Issued without a signed-off grade while a review round was open',
+            template: template.name,
+            count: rows.length,
+            certificates: rows
+          }
+        }, { transaction });
+      }
+
+      await models.CertificateInstance.destroy({
+        where: { id: { [Op.in]: targets.map((row) => row.instanceId) } },
+        transaction
+      });
+
+      logger.info('[certificateVerification] revoked unreviewed certificates', {
+        templateId, by: user.id, revoked: targets.length
+      });
+      return { revoked: targets.length, certificates: targets };
+    });
+  }
+
+  /** The union of both blockers — the ids that must not be sent to. */
+  async blockedRecipients(templateId, menteeIds, user) {
+    const { unreviewed, unapproved } = await this.sendBlockers(templateId, menteeIds, user);
+    return [...new Set([...unreviewed, ...unapproved])];
   }
 
   /** Tell a clan's mentors their certificates are cleared to send. */
@@ -512,6 +746,13 @@ class CertificateVerificationService {
       attributes: ['menteeId', 'finalTier', 'status', 'decision']
     });
     for (const row of rows) {
+      // Only a signed-off row states a tier. This read `finalTier` regardless
+      // of status, and a pending row carries the AI's provisional grade — so
+      // the AI's unconfirmed guess was handed to the issuer as if a human had
+      // confirmed it. On production that issued 193 certificates nobody had
+      // reviewed. An unreviewed mentee is absent here, and `blockedRecipients`
+      // refuses them rather than the caller inventing a tier.
+      if (row.status !== 'verified') continue;
       if (row.decision === 'no_certificate') out.set(row.menteeId, null);
       else if (row.finalTier) out.set(row.menteeId, row.finalTier);
     }
@@ -546,6 +787,7 @@ class CertificateVerificationService {
       overridden: Boolean(json.overridden),
       overrideReason: json.overrideReason || null,
       status: json.status,
+      stage: json.stage || (json.status === 'verified' ? 'mentor_verified' : 'awaiting_mentor'),
       verifiedAt: json.verifiedAt || null,
       verifiedBy: json.verifier
         ? `${json.verifier.firstName || ''} ${json.verifier.lastName || ''}`.trim()
@@ -689,6 +931,638 @@ class CertificateVerificationService {
       logger.warn(`[certificateVerification] mentor notification failed: ${err.message}`);
     }
     return recipients.length;
+  }
+
+  /**
+   * Nudge the people who still owe a review — and change nothing else.
+   *
+   * "Remind mentors" used to call `open()`, which is not a reminder at all: it
+   * rewrites every pending row back to the AI's grade (dropping a staged change
+   * and clearing `overridden`) and destroys the clan's approval wherever the
+   * grade moved. Pressing a nudge button could therefore un-approve clans and
+   * silently reset decisions. This reads, and only notifies.
+   *
+   * It also mails the right people the right number. The old notice went to
+   * every mentor of every clan holding a pending row and told them all the same
+   * GLOBAL figure — a mentor with two left to do was told "402 of your mentees
+   * have been graded", which is how a reminder trains people to ignore it. Each
+   * mentor now gets their own count, and a mentor with nothing outstanding is
+   * not written to at all.
+   */
+  async remindReviewers(templateId, { deadline = null } = {}, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can remind reviewers');
+    }
+    const template = await models.CertificateTemplate.findByPk(templateId);
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    // Moving the deadline is the one change a reminder may legitimately make,
+    // and only when the admin explicitly passes a new one.
+    if (deadline) {
+      template.verificationDeadline = deadline;
+      await template.save();
+    }
+
+    const pendingRows = await models.CertificateVerification.findAll({
+      where: { templateId, status: 'pending' },
+      attributes: ['menteeId', 'clanId'],
+      raw: true
+    });
+    // Historical rows can name people who have since left; only current
+    // memberships are somebody's outstanding work.
+    const pending = await this._activeReviewRows(pendingRows, template.programId);
+    const outstandingByClan = new Map();
+    for (const row of pending) {
+      if (!row.clanId) continue;
+      outstandingByClan.set(row.clanId, (outstandingByClan.get(row.clanId) || 0) + 1);
+    }
+    const clanIds = [...outstandingByClan.keys()];
+    if (!clanIds.length) {
+      return { notified: 0, clans: 0, outstanding: 0, unassigned: pending.length };
+    }
+
+    const memberships = await models.ClanMembership.findAll({
+      where: {
+        clanId: { [Op.in]: clanIds },
+        role: { [Op.in]: CertificateVerificationService.MENTOR_ROLES },
+        status: 'active'
+      },
+      attributes: ['userId', 'clanId'],
+      raw: true
+    });
+
+    const owedBy = new Map();
+    for (const m of memberships) {
+      const owed = outstandingByClan.get(m.clanId) || 0;
+      if (!owed) continue;
+      owedBy.set(m.userId, (owedBy.get(m.userId) || 0) + owed);
+    }
+    if (!owedBy.size) {
+      return { notified: 0, clans: clanIds.length, outstanding: pending.length, unassigned: 0 };
+    }
+
+    const due = template.verificationDeadline
+      ? ` by ${new Date(template.verificationDeadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      : '';
+
+    let notified = 0;
+    for (const [userId, owed] of owedBy.entries()) {
+      try {
+        await notificationOrchestrator.dispatch({
+          eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_REQUESTED,
+          recipients: [{ userId }],
+          payload: {
+            title: 'Certificate grades still need your review',
+            // Their own number. A reminder that overstates what somebody owes
+            // gets read as noise.
+            message: `${owed} grade${owed === 1 ? '' : 's'} in your clan${owed === 1 ? '' : 's'} still need your review for "${template.name}"${due}.`,
+            actionUrl: `/mentor/certificates?verify=${templateId}`,
+            actionLabel: 'Review grades',
+            relatedEntityType: 'CertificateTemplate',
+            emailSubject: `Pathment: ${owed} certificate grade${owed === 1 ? '' : 's'} to review${due}`
+          }
+        });
+        notified += 1;
+      } catch (err) {
+        logger.warn(`[certificateVerification] reminder to ${userId} failed: ${err.message}`);
+      }
+    }
+
+    logger.info('[certificateVerification] reminded reviewers', {
+      templateId, by: user.id, notified, clans: clanIds.length, outstanding: pending.length
+    });
+    return {
+      notified,
+      clans: clanIds.length,
+      outstanding: pending.length,
+      unassigned: pending.filter((r) => !r.clanId).length
+    };
+  }
+
+  /**
+   * Who decided this grade, and are they a mentor rather than an admin?
+   *
+   * "Only if a mentor assigned it" is the whole precondition for asking: there
+   * is no point asking an admin to explain a decision to themselves, and a row
+   * nobody has signed off has no decision to explain.
+   */
+  async _mentorBehindDecision(row) {
+    if (!row || row.status !== 'verified' || !row.verifiedBy) return null;
+    const decider = await models.User.findByPk(row.verifiedBy, {
+      attributes: ['id', 'firstName', 'lastName', 'email', 'role', 'capabilities']
+    });
+    if (!decider) return null;
+    return (await authzService.hasAdminAccess(decider)) ? null : decider;
+  }
+
+  /**
+   * Ask the mentor why they graded somebody the way they did.
+   *
+   * The grade is untouched. An admin who disagrees could previously only accept
+   * it or overrule it, and overruling throws away both the mentor's judgement
+   * and the reason for it — when very often the mentor knows something the
+   * record does not. The admin can still override afterwards, but with the
+   * answer in front of them.
+   */
+  async askMentor(templateId, menteeId, question, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can question a grade');
+    }
+    const text = String(question || '').trim();
+    if (!text) throw new ValidationError('Write the question you want the mentor to answer');
+
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['id', 'name', 'organizationId'] });
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    const row = await models.CertificateVerification.findOne({ where: { templateId, menteeId } });
+    if (!row) throw new NotFoundError('There is no review for this mentee to ask about');
+
+    const mentor = await this._mentorBehindDecision(row);
+    if (!mentor) {
+      throw new ValidationError(
+        row.status === 'verified'
+          ? 'This grade was decided by an admin, so there is no mentor to ask.'
+          : 'Nobody has signed this grade off yet, so there is nothing to ask about.'
+      );
+    }
+
+    const existing = await models.CertificateReviewQuestion.findOne({
+      where: { templateId, menteeId, kind: 'question', status: 'open' }, attributes: ['id']
+    });
+    if (existing) {
+      throw new ValidationError('There is already an open question on this grade, waiting for an answer.');
+    }
+
+    const asked = await models.CertificateReviewQuestion.create({
+      organizationId: template.organizationId,
+      templateId,
+      menteeId,
+      clanId: row.clanId || null,
+      askedBy: user.id,
+      kind: 'question',
+      question: text,
+      addressedTo: mentor.id,
+      status: 'open'
+    });
+
+    const mentee = await models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] });
+    const who = mentee ? `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() : 'a mentee';
+    try {
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_REQUESTED,
+        recipients: [{ userId: mentor.id }],
+        payload: {
+          title: 'An admin asked about a grade you gave',
+          message: `${who}: "${text}"`,
+          actionUrl: `/mentor/certificates?verify=${templateId}&question=${asked.id}`,
+          actionLabel: 'Answer',
+          relatedEntityType: 'CertificateTemplate',
+          emailSubject: `Pathment: a question about ${who}'s certificate`
+        }
+      });
+    } catch (err) {
+      logger.warn(`[certificateVerification] question notification failed: ${err.message}`);
+    }
+
+    logger.info('[certificateVerification] grade questioned', { templateId, menteeId, by: user.id, mentor: mentor.id });
+    return this._serializeQuestion(await this._reloadQuestion(asked.id));
+  }
+
+  /** The mentor's reply. Closes the question and tells the admin who asked. */
+  async answerQuestion(questionId, answer, user) {
+    const text = String(answer || '').trim();
+    if (!text) throw new ValidationError('Write an answer before sending it');
+
+    const question = await models.CertificateReviewQuestion.findByPk(questionId);
+    if (!question) throw new NotFoundError('Question not found');
+    if (question.status !== 'open') {
+      throw new ValidationError('This question has already been answered.');
+    }
+
+    // The mentor it was addressed to answers it. A lead mentor covering for
+    // somebody who has left can answer too — otherwise a question outlives the
+    // only person able to close it.
+    const isAddressee = question.addressedTo === user.id;
+    const coversClan = question.clanId
+      ? (await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW)).includes(question.clanId)
+      : false;
+    if (!isAddressee && !coversClan) {
+      throw new ForbiddenError('Only the mentor who made this decision can answer it');
+    }
+
+    question.answer = text;
+    question.answeredBy = user.id;
+    question.answeredAt = new Date();
+    question.status = 'answered';
+    await question.save();
+
+    const mentee = await models.User.findByPk(question.menteeId, { attributes: ['firstName', 'lastName'] });
+    const who = mentee ? `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() : 'a mentee';
+    try {
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED,
+        recipients: [{ userId: question.askedBy }],
+        payload: {
+          title: 'A mentor answered your question',
+          message: `${who}: "${text}"`,
+          actionUrl: `/admin/certificates/${question.templateId}/edit?mentee=${question.menteeId}`,
+          actionLabel: 'Read the answer',
+          relatedEntityType: 'CertificateTemplate',
+          emailSubject: `Pathment: answer about ${who}'s certificate`
+        }
+      });
+    } catch (err) {
+      logger.warn(`[certificateVerification] answer notification failed: ${err.message}`);
+    }
+
+    return this._serializeQuestion(await this._reloadQuestion(question.id));
+  }
+
+  /**
+   * The mentor's way forward once a grade is locked.
+   *
+   * They may not edit an approved grade, but they are the person who knows the
+   * mentee and the one most likely to spot a mistake afterwards. So they say
+   * what they want it changed to and why, and the admin decides in one press.
+   *
+   * Only for a LOCKED grade. While the row is merely `mentor_verified` the
+   * mentor can still just change it, and routing that through an approval queue
+   * would be ceremony for nothing.
+   */
+  async requestChange(templateId, menteeId, { finalTier, decision, reason } = {}, user) {
+    const text = String(reason || '').trim();
+    if (!text) throw new ValidationError('Say why the grade should change');
+
+    const template = await models.CertificateTemplate.findByPk(templateId, {
+      attributes: ['id', 'name', 'organizationId', 'criteria']
+    });
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    const row = await models.CertificateVerification.findOne({ where: { templateId, menteeId } });
+    if (!row) throw new NotFoundError('There is no review for this mentee');
+    await this._assertCanReview(user, row);
+
+    if (await authzService.hasAdminAccess(user)) {
+      throw new ValidationError('You can change this grade directly — there is nobody to ask.');
+    }
+
+    const lockedByAdmin = row.stage === 'admin_approved';
+    const lockedByClan = !lockedByAdmin && row.clanId && await models.CertificateClanApproval.findOne({
+      where: { templateId, clanId: row.clanId }, attributes: ['id']
+    });
+    if (!lockedByAdmin && !lockedByClan) {
+      throw new ValidationError('This grade is not approved yet — change it directly instead.');
+    }
+
+    const nextDecision = decision || (finalTier ? 'award' : null);
+    if (!['award', 'no_certificate'].includes(nextDecision)) {
+      throw new ValidationError('Choose a certificate or No certificate to request.');
+    }
+    const tier = nextDecision === 'award' ? (finalTier || null) : null;
+    if (nextDecision === 'award') this._assertTierExists(template, tier);
+    if (nextDecision === row.decision && tier === row.finalTier) {
+      throw new ValidationError('That is the grade it already has.');
+    }
+
+    const existing = await models.CertificateReviewQuestion.findOne({
+      where: { templateId, menteeId, kind: 'change_request', status: 'open' }, attributes: ['id']
+    });
+    if (existing) throw new ValidationError('You already have a change request open on this grade.');
+
+    const created = await models.CertificateReviewQuestion.create({
+      organizationId: template.organizationId,
+      templateId,
+      menteeId,
+      clanId: row.clanId || null,
+      kind: 'change_request',
+      askedBy: user.id,
+      question: text,
+      requestedTier: tier,
+      requestedDecision: nextDecision,
+      status: 'open'
+    });
+
+    await this._tellAdmins(template, {
+      title: 'A mentor asked to change an approved grade',
+      message: `${await this._menteeName(menteeId)}: ${this._tierLabel(template, row.finalTier, row.decision)} → ${this._tierLabel(template, tier, nextDecision)}. "${text}"`,
+      actionUrl: `/admin/certificates/${templateId}/edit?mentee=${menteeId}`,
+      actionLabel: 'Review the request'
+    });
+
+    return this._serializeQuestion(await this._reloadQuestion(created.id));
+  }
+
+  /**
+   * The admin's answer to a change request. Approving APPLIES the change, as
+   * the admin's own decision — so the row ends up `admin_approved` with the
+   * admin on it, which is exactly what happened.
+   */
+  async resolveChangeRequest(questionId, { approve, note = null } = {}, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can decide a change request');
+    }
+    const request = await models.CertificateReviewQuestion.findByPk(questionId);
+    if (!request) throw new NotFoundError('Request not found');
+    if (request.kind !== 'change_request') throw new ValidationError('That is not a change request.');
+    if (request.status !== 'open') throw new ValidationError('This request has already been decided.');
+
+    const text = String(note || '').trim();
+    if (!approve && !text) throw new ValidationError('Give a reason when declining a change request');
+
+    if (approve) {
+      // Applied through `verify` so every rule still holds — the tier must
+      // exist, an issued certificate still blocks a change, and the decision
+      // history records the admin as the one who made it.
+      await this.verify(request.templateId, request.menteeId, {
+        decision: request.requestedDecision,
+        finalTier: request.requestedTier,
+        reason: text || `Approved a change requested by a mentor: ${request.question}`
+      }, user, { notify: false });
+    }
+
+    request.status = 'answered';
+    request.resolution = approve ? 'approved' : 'declined';
+    request.answer = text || (approve ? 'Approved.' : null);
+    request.answeredBy = user.id;
+    request.answeredAt = new Date();
+    await request.save();
+
+    const template = await models.CertificateTemplate.findByPk(request.templateId, { attributes: ['id', 'name', 'criteria'] });
+    try {
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED,
+        recipients: [{ userId: request.askedBy }],
+        payload: {
+          title: approve ? 'Your change request was approved' : 'Your change request was declined',
+          message: `${await this._menteeName(request.menteeId)}: ${approve
+            ? `now ${this._tierLabel(template, request.requestedTier, request.requestedDecision)}.`
+            : 'the grade stands.'}${text ? ` "${text}"` : ''}`,
+          actionUrl: `/mentor/certificates?verify=${request.templateId}`,
+          actionLabel: 'Open the review',
+          relatedEntityType: 'CertificateTemplate',
+          emailSubject: `Pathment: change request ${approve ? 'approved' : 'declined'}`
+        }
+      });
+    } catch (err) {
+      logger.warn(`[certificateVerification] change-request reply failed: ${err.message}`);
+    }
+
+    return this._serializeQuestion(await this._reloadQuestion(request.id));
+  }
+
+  /**
+   * A mentor asking for the certificate report for their clan.
+   *
+   * Reports are an admin surface; a mentor who wants one had no way to say so.
+   * This is a request, not a generated file — the admin sends it, and the
+   * thread records that it was asked for.
+   */
+  async requestReport(templateId, { clanId = null, note = null } = {}, user) {
+    const template = await models.CertificateTemplate.findByPk(templateId, {
+      attributes: ['id', 'name', 'organizationId']
+    });
+    if (!template) throw new NotFoundError('Certificate template not found');
+    if (await authzService.hasAdminAccess(user)) {
+      throw new ValidationError('You already have the report — open the issuance history.');
+    }
+
+    const mine = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
+    const target = clanId || mine[0] || null;
+    if (!target || !mine.includes(target)) {
+      throw new ForbiddenError('You can only request the report for a clan you mentor');
+    }
+
+    const existing = await models.CertificateReviewQuestion.findOne({
+      where: { templateId, clanId: target, kind: 'report_request', status: 'open' }, attributes: ['id']
+    });
+    if (existing) throw new ValidationError('You already have a report request open for this clan.');
+
+    const clan = await models.Clan.findByPk(target, { attributes: ['name'] });
+    const text = String(note || '').trim();
+    const created = await models.CertificateReviewQuestion.create({
+      organizationId: template.organizationId,
+      templateId,
+      menteeId: null,
+      clanId: target,
+      kind: 'report_request',
+      askedBy: user.id,
+      question: text || `Please send the certificate report for ${clan?.name || 'my clan'}.`,
+      status: 'open'
+    });
+
+    await this._tellAdmins(template, {
+      title: 'A mentor requested the certificate report',
+      message: `${clan?.name || 'A clan'} — "${created.question}"`,
+      actionUrl: `/admin/certificates/${templateId}/edit`,
+      actionLabel: 'Open the cycle'
+    });
+
+    return this._serializeQuestion(await this._reloadQuestion(created.id));
+  }
+
+  /** Every admin on this workspace, told once. */
+  async _tellAdmins(template, { title, message, actionUrl, actionLabel }) {
+    const admins = await models.User.findAll({
+      where: { role: 'admin', status: 'active' }, attributes: ['id'], raw: true
+    });
+    if (!admins.length) return 0;
+    try {
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED,
+        recipients: admins.map((a) => ({ userId: a.id })),
+        payload: {
+          title, message, actionUrl, actionLabel,
+          relatedEntityType: 'CertificateTemplate',
+          emailSubject: `Pathment: ${title}`
+        }
+      });
+    } catch (err) {
+      logger.warn(`[certificateVerification] admin notification failed: ${err.message}`);
+    }
+    return admins.length;
+  }
+
+  async _menteeName(menteeId) {
+    if (!menteeId) return 'A mentee';
+    const u = await models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] });
+    return u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : 'A mentee';
+  }
+
+  _tierLabel(template, tier, decision) {
+    if (decision === 'no_certificate') return 'No certificate';
+    if (!tier) return 'no grade';
+    const match = (template?.criteria || []).find((c) => c.id === tier);
+    return match?.name || tier;
+  }
+
+  /** Take a question back — asked in error, or already resolved another way. */
+  async withdrawQuestion(questionId, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can withdraw a question');
+    }
+    const question = await models.CertificateReviewQuestion.findByPk(questionId);
+    if (!question) throw new NotFoundError('Question not found');
+    if (question.status !== 'open') throw new ValidationError('Only an open question can be withdrawn.');
+    question.status = 'withdrawn';
+    await question.save();
+    return this._serializeQuestion(await this._reloadQuestion(question.id));
+  }
+
+  /**
+   * Questions on a template, newest first. `menteeId` narrows to one person's
+   * thread; `openOnly` is what the roster badge and the mentor's inbox read.
+   */
+  async listQuestions(templateId, { menteeId = null, openOnly = false, kind = null } = {}) {
+    const where = { templateId };
+    if (menteeId) where.menteeId = menteeId;
+    if (openOnly) where.status = 'open';
+    if (kind) where.kind = kind;
+    const rows = await models.CertificateReviewQuestion.findAll({
+      where,
+      include: [
+        { model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
+        { model: models.User, as: 'asker', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.User, as: 'addressee', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.User, as: 'answerer', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }
+      ],
+      order: [['askedAt', 'DESC']]
+    });
+    return rows.map((row) => this._serializeQuestion(row));
+  }
+
+  /**
+   * Every open thread on this template, in one read.
+   *
+   * The roster needs two different flags per row — queried by an admin, and
+   * change requested by a mentor — and they come from the same table. One
+   * query, split here, rather than one round trip per flag.
+   */
+  async openThreads(templateId) {
+    const rows = await models.CertificateReviewQuestion.findAll({
+      where: { templateId, status: 'open' },
+      attributes: ['menteeId', 'kind', 'clanId'],
+      raw: true
+    });
+    const questioned = new Set();
+    const changeRequested = new Set();
+    const reportRequests = [];
+    for (const row of rows) {
+      if (row.kind === 'question' && row.menteeId) questioned.add(row.menteeId);
+      else if (row.kind === 'change_request' && row.menteeId) changeRequested.add(row.menteeId);
+      else if (row.kind === 'report_request') reportRequests.push(row.clanId);
+    }
+    return { questioned, changeRequested, reportRequests };
+  }
+
+  /** The mentee ids carrying an open admin question. */
+  async openQuestionMenteeIds(templateId) {
+    return (await this.openThreads(templateId)).questioned;
+  }
+
+  async _reloadQuestion(id) {
+    return models.CertificateReviewQuestion.findByPk(id, {
+      include: [
+        { model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
+        { model: models.User, as: 'asker', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.User, as: 'addressee', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.User, as: 'answerer', attributes: ['id', 'firstName', 'lastName'], required: false },
+        { model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }
+      ]
+    });
+  }
+
+  _serializeQuestion(row) {
+    if (!row) return null;
+    const json = row.toJSON ? row.toJSON() : row;
+    const name = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : null);
+    return {
+      id: json.id,
+      templateId: json.templateId,
+      menteeId: json.menteeId,
+      menteeName: name(json.mentee),
+      clanId: json.clanId,
+      clanName: json.clan?.name || null,
+      kind: json.kind || 'question',
+      question: json.question,
+      requestedTier: json.requestedTier || null,
+      requestedDecision: json.requestedDecision || null,
+      resolution: json.resolution || null,
+      askedBy: name(json.asker),
+      askedById: json.askedBy,
+      askedAt: json.askedAt,
+      addressedTo: json.addressedTo,
+      addressedToName: name(json.addressee),
+      answer: json.answer || null,
+      answeredBy: name(json.answerer),
+      answeredAt: json.answeredAt || null,
+      status: json.status
+    };
+  }
+
+  /**
+   * Tell this one mentee's mentors their review is waiting.
+   *
+   * The round-wide reminder is all-or-nothing; an admin looking at one person
+   * had no way to chase just them without mailing every unfinished clan.
+   */
+  async notifyMentorsForMentee(templateId, menteeId, { note = null } = {}, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can notify a mentor about a mentee');
+    }
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['id', 'name', 'programId'] });
+    if (!template) throw new NotFoundError('Certificate template not found');
+
+    const row = await models.CertificateVerification.findOne({
+      where: { templateId, menteeId }, attributes: ['clanId', 'status']
+    });
+    const clanOf = await this._clanOfMentees([menteeId], template.programId);
+    const clanId = row?.clanId || clanOf.get(menteeId) || null;
+    if (!clanId) {
+      throw new ValidationError(
+        'This mentee is not in a clan, so no mentor owns their review. Only an admin can review them.'
+      );
+    }
+
+    const mentors = await models.ClanMembership.findAll({
+      where: {
+        clanId,
+        role: { [Op.in]: CertificateVerificationService.MENTOR_ROLES },
+        status: 'active'
+      },
+      attributes: ['userId'], raw: true
+    });
+    const recipients = [...new Set(mentors.map((m) => m.userId))];
+    if (!recipients.length) {
+      throw new ValidationError('That clan has no active mentor to notify.');
+    }
+
+    const [mentee, clan] = await Promise.all([
+      models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] }),
+      models.Clan.findByPk(clanId, { attributes: ['name'] })
+    ]);
+    const who = mentee ? `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() : 'a mentee';
+    const extra = String(note || '').trim();
+
+    try {
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_REQUESTED,
+        recipients: recipients.map((userId) => ({ userId })),
+        payload: {
+          title: `${who}'s certificate grade needs your review`,
+          message: extra || `${who} in ${clan?.name || 'your clan'} is still waiting on a grade for "${template.name}".`,
+          actionUrl: `/mentor/certificates?verify=${templateId}&mentee=${menteeId}`,
+          actionLabel: 'Review now',
+          relatedEntityType: 'CertificateTemplate',
+          emailSubject: `Pathment: review ${who}'s certificate grade`
+        }
+      });
+    } catch (err) {
+      logger.warn(`[certificateVerification] mentee reminder failed: ${err.message}`);
+      throw new ValidationError('Could not send the notification. Try again.');
+    }
+
+    return { notified: recipients.length, clanId, clanName: clan?.name || null };
   }
 
   /** When a clan finishes, tell the admins it is clear to issue. */

@@ -4,13 +4,18 @@ import { NO_CERTIFICATE, reviewSelection, aiSelection, decisionPayload } from '@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  AlertTriangle, Award, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock, Loader2, RefreshCw,
-  Sparkles, XCircle,
+  AlertTriangle, Award, Bell, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock, Loader2,
+  MessageCircleQuestion, RefreshCw, Sparkles, XCircle,
 } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { SelectMenu } from '@/components/shared/SelectMenu';
-import { certificatesApi, type MenteeEvidence, type EvidenceRoadmap } from '@/lib/services/certificates-api';
+import { reviewNavigationAction } from '@/lib/utils/review-navigation-keys';
+import { reviewActionLabels } from '@/lib/utils/certificate-review-stage';
+import { usePermissions } from '@/lib/hooks/usePermissions';
+import { usePathname } from 'next/navigation';
+import { roleFromPathname } from '@/lib/utils/notification-audience';
+import { certificatesApi, type MenteeEvidence, type EvidenceRoadmap, type CertificateReviewQuestion } from '@/lib/services/certificates-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
 
@@ -53,12 +58,34 @@ interface MenteeEvidenceDrawerProps {
 export function MenteeEvidenceDrawer({
   templateId, menteeId, onClose, onTierChange, onDecided, canDecide = true, initialSelection, navigation,
 }: MenteeEvidenceDrawerProps) {
+  /**
+   * Signing off is the mentor's step; approving is the admin's — so the verb
+   * follows the PORTAL, not the standing.
+   *
+   * `canAccessAdmin` answers what the person holds and stays true everywhere on
+   * purpose: it is cached per user and drives the admin-area guard, so
+   * narrowing it by portal would lock an admin out of their own admin area.
+   * That makes it the wrong input for a label. Somebody who is both an admin
+   * and a mentor, reviewing their own clan on a mentor screen, was told they
+   * were approving — which is not what the server records for them there.
+   *
+   * The pathname already says which portal this is, for free.
+   */
+  const { canAccessAdmin } = usePermissions();
+  const pathname = usePathname();
+  const actingAsAdmin = canAccessAdmin && roleFromPathname(pathname ?? '') === 'admin';
+  const actionLabels = reviewActionLabels(actingAsAdmin);
   const [evidence, setEvidence] = useState<MenteeEvidence | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [draftTier, setDraftTier] = useState('');
   const [reason, setReason] = useState('');
+  const [questions, setQuestions] = useState<CertificateReviewQuestion[]>([]);
+  const [draftQuestion, setDraftQuestion] = useState('');
+  const [draftAnswer, setDraftAnswer] = useState('');
+  const [questionBusy, setQuestionBusy] = useState(false);
+  const [notifying, setNotifying] = useState(false);
 
   /**
    * Deps are the two ids and nothing else — deliberately.
@@ -96,19 +123,49 @@ export function MenteeEvidenceDrawer({
     load();
   }, [menteeId, load]);
 
+  /** This mentee's question thread, loaded alongside their case. */
+  const loadQuestions = useCallback(async () => {
+    if (!templateId || !menteeId) { setQuestions([]); return; }
+    try {
+      const res = await certificatesApi.listReviewQuestions(templateId, { menteeId });
+      setQuestions(res.data?.questions ?? []);
+    } catch {
+      // A failed thread must not blank the case behind it — the grade and the
+      // evidence are what this drawer is primarily for.
+      setQuestions([]);
+    }
+  }, [templateId, menteeId]);
+
+  useEffect(() => {
+    setDraftQuestion('');
+    setDraftAnswer('');
+    loadQuestions();
+  }, [loadQuestions]);
+
+  /**
+   * Arrow keys step through the queue.
+   *
+   * This used to require ALT+arrow, which nobody could discover and which asks
+   * for the one chord the browser has already claimed: Alt+Left is Back on
+   * Windows and Linux, so the reviewer either did nothing or lost the page.
+   * Reviewing six hundred people one at a time is the whole job on this screen
+   * and it should not need the mouse. The rule for which presses count lives in
+   * `reviewNavigationAction` so it can be read and tested without a DOM.
+   */
   useEffect(() => {
     if (!menteeId || !navigation) return;
+
     const navigate = (event: KeyboardEvent) => {
-      if (!event.altKey) return;
-      if (event.key === 'ArrowLeft' && navigation.onPrevious) {
-        event.preventDefault();
-        navigation.onPrevious();
-      }
-      if (event.key === 'ArrowRight' && navigation.onNext) {
-        event.preventDefault();
-        navigation.onNext();
-      }
+      const action = reviewNavigationAction(event, event.target as HTMLElement | null);
+      const step = action === 'previous' ? navigation.onPrevious
+        : action === 'next' ? navigation.onNext
+          : null;
+      if (!step) return;
+
+      event.preventDefault();
+      step();
     };
+
     window.addEventListener('keydown', navigate);
     return () => window.removeEventListener('keydown', navigate);
   }, [menteeId, navigation]);
@@ -117,6 +174,130 @@ export function MenteeEvidenceDrawer({
     id === NO_CERTIFICATE ? 'No certificate' : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
 
   const v = evidence?.verification ?? null;
+
+  const openQuestion = questions.find(q => q.status === 'open') ?? null;
+  /**
+   * A question is only meaningful against a MENTOR's decision — there is
+   * nothing to ask when an admin graded it themselves, or when nobody has
+   * signed it off. The server enforces this; the UI simply does not offer it,
+   * so the button is never there to be refused.
+   */
+  const decidedByMentor = Boolean(
+    v?.status === 'verified' && v?.stage === 'mentor_verified'
+  );
+  const canAsk = actingAsAdmin && decidedByMentor && !openQuestion;
+  const canAnswer = Boolean(openQuestion) && !actingAsAdmin;
+
+  /**
+   * An approved grade is the admin's call, so the mentor asks instead of
+   * editing. Swapping the form rather than letting them fill it in and be
+   * refused is the whole difference between a lock and a dead end.
+   */
+  const lockedForMentor = Boolean(!actingAsAdmin && v?.stage === 'admin_approved');
+  const openChangeRequest = questions.find(q => q.kind === 'change_request' && q.status === 'open') ?? null;
+
+  const ask = async () => {
+    if (!templateId || !menteeId || !draftQuestion.trim()) return;
+    try {
+      setQuestionBusy(true);
+      await certificatesApi.askMentorAboutGrade(templateId, menteeId, draftQuestion.trim());
+      toast.success('Question sent to the mentor');
+      setDraftQuestion('');
+      await loadQuestions();
+      await onDecided?.();
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not send the question'));
+    } finally {
+      setQuestionBusy(false);
+    }
+  };
+
+  const answer = async () => {
+    if (!openQuestion || !draftAnswer.trim()) return;
+    try {
+      setQuestionBusy(true);
+      await certificatesApi.answerReviewQuestion(openQuestion.id, draftAnswer.trim());
+      toast.success('Answer sent');
+      setDraftAnswer('');
+      await loadQuestions();
+      await onDecided?.();
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not send the answer'));
+    } finally {
+      setQuestionBusy(false);
+    }
+  };
+
+  const requestChange = async () => {
+    if (!templateId || !menteeId || !draftTier || !reason.trim()) return;
+    try {
+      setQuestionBusy(true);
+      await certificatesApi.requestGradeChange(templateId, menteeId, {
+        ...decisionPayload(draftTier),
+        reason: reason.trim(),
+      });
+      toast.success('Change request sent — an admin will decide');
+      setReason('');
+      await loadQuestions();
+      await onDecided?.();
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not send the change request'));
+    } finally {
+      setQuestionBusy(false);
+    }
+  };
+
+  const resolveChange = async (approve: boolean) => {
+    if (!openChangeRequest) return;
+    if (!approve && !draftAnswer.trim()) {
+      toast.error('Give a reason when declining a change request');
+      return;
+    }
+    try {
+      setQuestionBusy(true);
+      const res = await certificatesApi.resolveChangeRequest(
+        openChangeRequest.id, approve, draftAnswer.trim() || undefined,
+      );
+      toast.success(res.message || (approve ? 'Change applied' : 'Request declined'));
+      setDraftAnswer('');
+      await loadQuestions();
+      await load();
+      await onDecided?.();
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not decide the request'));
+    } finally {
+      setQuestionBusy(false);
+    }
+  };
+
+  const withdraw = async () => {
+    if (!openQuestion) return;
+    try {
+      setQuestionBusy(true);
+      await certificatesApi.withdrawReviewQuestion(openQuestion.id);
+      toast.success('Question withdrawn');
+      await loadQuestions();
+      await onDecided?.();
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not withdraw the question'));
+    } finally {
+      setQuestionBusy(false);
+    }
+  };
+
+  /** Chase this one mentee's mentors, rather than every unfinished clan. */
+  const notifyMentor = async () => {
+    if (!templateId || !menteeId) return;
+    try {
+      setNotifying(true);
+      const res = await certificatesApi.notifyMentorsForMentee(templateId, menteeId);
+      toast.success(res.message || 'Mentor notified');
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Could not notify the mentor'));
+    } finally {
+      setNotifying(false);
+    }
+  };
   const m = evidence?.metrics;
   const basis = m?.completion_basis;
 
@@ -143,7 +324,7 @@ export function MenteeEvidenceDrawer({
         ...decisionPayload(draftTier),
         reason: needsReason ? reason.trim() : undefined,
       });
-      toast.success(isChange ? 'Grade changed and signed off' : 'Grade signed off');
+      toast.success(isChange ? actionLabels.doneChanged : actionLabels.done);
       await onDecided?.();
       if (navigation?.onNext) navigation.onNext();
       else onClose();
@@ -192,7 +373,14 @@ export function MenteeEvidenceDrawer({
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
-                    <span>Review progress</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      Review progress
+                      <span className="hidden items-center gap-1 font-normal sm:inline-flex">
+                        <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px] leading-4">←</kbd>
+                        <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px] leading-4">→</kbd>
+                        to move
+                      </span>
+                    </span>
                     <span>{navigation.position} / {navigation.total}</span>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -200,8 +388,8 @@ export function MenteeEvidenceDrawer({
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button type="button" onClick={navigation.onPrevious} disabled={!navigation.onPrevious} aria-label="Previous mentee" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-                  <button type="button" onClick={navigation.onNext} disabled={!navigation.onNext} aria-label="Next mentee" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                  <button type="button" onClick={navigation.onPrevious} disabled={!navigation.onPrevious} aria-label="Previous mentee (left arrow)" title="Previous  ←" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                  <button type="button" onClick={navigation.onNext} disabled={!navigation.onNext} aria-label="Next mentee (right arrow)" title="Next  →" className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
                 </div>
               </div>
             </div>
@@ -356,8 +544,239 @@ export function MenteeEvidenceDrawer({
             </p>
           )}
 
+          {/* ── Ask the mentor about their decision ─────────────────────── */}
+          {(questions.length > 0 || canAsk || canAnswer) && (
+            <section className="space-y-2.5">
+              <SectionLabel>
+                {canAnswer ? 'An admin asked about this grade' : 'Questions on this grade'}
+              </SectionLabel>
+
+              <div className="space-y-3 rounded-2xl border border-border bg-muted/20 p-4">
+                {questions.map(q => (
+                  <div
+                    key={q.id}
+                    className={`space-y-2 rounded-xl border p-3 ${
+                      q.status === 'open'
+                        ? 'border-amber-500/30 bg-amber-500/5'
+                        : 'border-border bg-card'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                        q.status === 'open' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+                          : q.status === 'answered' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                            : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {q.status === 'withdrawn' ? 'Withdrawn'
+                          : q.status === 'open'
+                            ? (q.kind === 'change_request' ? 'Awaiting an admin'
+                              : q.kind === 'report_request' ? 'Report requested' : 'Awaiting the mentor')
+                            : q.resolution === 'approved' ? 'Approved'
+                              : q.resolution === 'declined' ? 'Declined' : 'Answered'}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {q.kind === 'change_request'
+                          ? `${q.askedBy || 'A mentor'} asked the admins`
+                          : `${q.askedBy || 'An admin'} asked ${q.addressedToName || 'the mentor'}`}
+                        {q.askedAt ? ` · ${new Date(q.askedAt).toLocaleDateString()}` : ''}
+                      </span>
+                    </div>
+
+                    {q.kind === 'change_request' && (
+                      <p className="text-[11px] font-bold text-foreground">
+                        Requested: {q.requestedDecision === 'no_certificate'
+                          ? 'No certificate'
+                          : tierName(q.requestedTier || '')}
+                      </p>
+                    )}
+
+                    <p className="whitespace-pre-wrap text-xs font-medium text-foreground">{q.question}</p>
+
+                    {q.answer ? (
+                      <div className="rounded-lg border-l-2 border-emerald-500/40 bg-emerald-500/5 py-2 pl-3 pr-2">
+                        <p className="whitespace-pre-wrap text-xs text-foreground">{q.answer}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {q.answeredBy || 'The mentor'}
+                          {q.answeredAt ? ` · ${new Date(q.answeredAt).toLocaleDateString()}` : ''}
+                        </p>
+                      </div>
+                    ) : q.status === 'open' && (
+                      <p className="text-[11px] italic text-muted-foreground">
+                        {/* The grade is untouched meanwhile — saying so stops an
+                            admin assuming a question blocks the certificate. */}
+                        No answer yet. The grade stands until it is changed.
+                      </p>
+                    )}
+                  </div>
+                ))}
+
+                {actingAsAdmin && openChangeRequest && (
+                  <div className="space-y-2 rounded-xl border border-brand-500/30 bg-brand-500/5 p-3">
+                    <p className="text-[11px] font-semibold text-foreground">Decide this request</p>
+                    <textarea
+                      value={draftAnswer}
+                      onChange={e => setDraftAnswer(e.target.value)}
+                      rows={2}
+                      placeholder="Optional when approving; required when declining…"
+                      aria-label="Note on the change request"
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => resolveChange(true)}
+                        disabled={questionBusy}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground"
+                      >
+                        {questionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        Approve &amp; apply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resolveChange(false)}
+                        disabled={questionBusy}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:border-red-500/40 disabled:opacity-50"
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {canAsk && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={draftQuestion}
+                      onChange={e => setDraftQuestion(e.target.value)}
+                      rows={3}
+                      placeholder={`Ask ${v?.verifiedBy || 'the mentor'} why they chose this grade…`}
+                      aria-label="Ask the mentor about this grade"
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={ask}
+                        disabled={questionBusy || !draftQuestion.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-2 text-xs font-medium text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+                      >
+                        {questionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircleQuestion className="h-3.5 w-3.5" />}
+                        Ask the mentor
+                      </button>
+                      <span className="text-[11px] text-muted-foreground">
+                        They are notified and can answer without the grade changing.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {canAnswer && openQuestion && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={draftAnswer}
+                      onChange={e => setDraftAnswer(e.target.value)}
+                      rows={3}
+                      placeholder="Explain what you weighed that the record does not show…"
+                      aria-label="Answer the admin's question"
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground"
+                    />
+                    <button
+                      type="button"
+                      onClick={answer}
+                      disabled={questionBusy || !draftAnswer.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+                    >
+                      {questionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      Send answer
+                    </button>
+                  </div>
+                )}
+
+                {actingAsAdmin && openQuestion && (
+                  <button
+                    type="button"
+                    onClick={withdraw}
+                    disabled={questionBusy}
+                    className="text-[11px] font-semibold text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                  >
+                    Withdraw this question
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* ── Nudge this one mentee's mentors ─────────────────────────── */}
+          {actingAsAdmin && v?.status !== 'verified' && (
+            <section className="space-y-2.5">
+              <SectionLabel>Waiting on the mentor</SectionLabel>
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-muted/20 p-4">
+                <button
+                  type="button"
+                  onClick={notifyMentor}
+                  disabled={notifying}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:border-brand-500/40 disabled:opacity-50"
+                >
+                  {notifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                  Notify this mentee's mentor
+                </button>
+                <span className="text-[11px] text-muted-foreground">
+                  {/* The round-wide reminder mails every unfinished clan; this
+                      is the one person in front of you. */}
+                  Writes only to the mentors of {evidence.clan?.name || 'this clan'}.
+                </span>
+              </div>
+            </section>
+          )}
+
+          {/* ── Approved: the mentor asks instead of editing ────────────── */}
+          {canDecide && lockedForMentor && (
+            <section className="space-y-2.5">
+              <SectionLabel>Approved — request a change</SectionLabel>
+              <div className="space-y-3 rounded-2xl border border-border bg-muted/20 p-4">
+                <p className="text-[11px] text-muted-foreground">
+                  An admin has approved this grade, so it is no longer yours to edit.
+                  Say what it should be and why, and an admin will decide.
+                </p>
+                {openChangeRequest ? (
+                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs font-medium text-foreground">
+                    Your request is with the admins. You will be notified either way.
+                  </p>
+                ) : (
+                  <>
+                    <SelectMenu
+                      value={draftTier}
+                      onChange={setDraftTier}
+                      options={[{ value: NO_CERTIFICATE, label: 'No certificate' }, ...evidence.criteria.map((c) => ({ value: c.id, label: c.name }))]}
+                      placeholder="Pick a badge"
+                      ariaLabel="Grade to request"
+                    />
+                    <textarea
+                      value={reason}
+                      onChange={e => setReason(e.target.value)}
+                      rows={3}
+                      placeholder="Why should this change? Say what you weighed that the record does not show."
+                      aria-label="Reason for the change request"
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground"
+                    />
+                    <button
+                      type="button"
+                      onClick={requestChange}
+                      disabled={questionBusy || !draftTier || !reason.trim()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+                    >
+                      {questionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircleQuestion className="h-4 w-4" />}
+                      Request this change
+                    </button>
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* ── Change the grade ───────────────────────────────────────── */}
-          {canDecide && (
+          {canDecide && !lockedForMentor && (
             <section className="space-y-2.5">
               <SectionLabel>{v ? 'Your decision' : 'Assign a badge'}</SectionLabel>
               <div className="space-y-3 rounded-2xl border border-border bg-muted/20 p-4">
@@ -396,7 +815,7 @@ export function MenteeEvidenceDrawer({
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                   {v
-                    ? `${isChange ? 'Save change and sign off' : 'Sign off this grade'}${navigation?.onNext ? ' · Next' : ''}`
+                    ? `${isChange ? actionLabels.confirmChanged : actionLabels.confirm}${navigation?.onNext ? ' · Next' : ''}`
                     : 'Set badge'}
                 </button>
                 {reasonMissing && (

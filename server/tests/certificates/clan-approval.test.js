@@ -65,10 +65,28 @@ describe('admin approval gates issuing', () => {
     });
 
     it('refuses a mentor who has not reviewed at all', async () => {
-      await expect(issueAs(lead)).rejects.toThrow(/not been approved/i);
+      // The blocker here is the missing review, not the missing release, and the
+      // error says so — the two need opposite things from whoever reads it.
+      await expect(issueAs(lead)).rejects.toThrow(/have not been signed off/i);
     });
 
-    it('still lets the admin issue — they are never gated', async () => {
+    /**
+     * The admin's exemption is from the CLAN RELEASE, not from review.
+     *
+     * This suite used to assert "they are never gated" and issue to a mentee
+     * nobody had looked at — encoding the defect. On production one press of
+     * Issue then sent 410 participation certificates, 195 of them for grades no
+     * human had ever confirmed: `hasAdminAccess` returned early from the gate,
+     * and `resolveTiers` handed back the pending row's AI grade as if it were
+     * final.
+     */
+    it('refuses even the admin while the grade is only the AI\'s', async () => {
+      await expect(issueAs(admin)).rejects.toThrow(/have not been signed off/i);
+      expect(await models.CertificateInstance.count()).toBe(0);
+    });
+
+    it('lets the admin issue without releasing the clan, once the grade is signed off', async () => {
+      await verification.verify(template.id, mentee.id, {}, admin);
       const res = await issueAs(admin);
       expect(res.count).toBe(1);
     });

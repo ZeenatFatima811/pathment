@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Search, Loader2, Award, RefreshCw, RotateCw, Trash2, CheckCircle2
+  Search, Loader2, Award, RefreshCw, RotateCw, Trash2, CheckCircle2, ShieldAlert
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { certificatesApi } from '@/lib/services/certificates-api';
@@ -193,6 +193,65 @@ export default function CertificateHistoryLog({ templateId, userRole }: Certific
     });
   };
 
+  /**
+   * Revoke only the certificates nobody signed off.
+   *
+   * Deliberately previews first. "Revoke All" can be confirmed blind because its
+   * scope is obvious; this one's scope is a query result, and an admin should
+   * see how many people and which clans before destroying anything. The count
+   * comes from the same predicate the send gate uses, so what is listed is
+   * exactly what will go.
+   */
+  const handleRevokeUnreviewed = async () => {
+    let preview;
+    try {
+      setLoading(true);
+      preview = (await certificatesApi.unreviewedIssued(templateId)).data;
+    } catch (err: any) {
+      toast.error(err.message || 'Could not check which certificates were unreviewed');
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    if (!preview.count) {
+      toast.success('Nothing to revoke — every issued certificate has a signed-off grade.');
+      return;
+    }
+
+    const clans = [...new Set(preview.certificates.map(c => c.clanName || 'No clan'))].sort();
+    const noRow = preview.certificates.filter(c => c.reviewStatus === null).length;
+
+    setConfirmConfig({
+      isOpen:       true,
+      title:        `Revoke ${preview.count} unreviewed certificate${preview.count === 1 ? '' : 's'}?`,
+      message:
+        `${preview.count} certificate(s) went out without a mentor or admin signing off the grade`
+        + `${noRow ? `, ${noRow} of them for someone with no review record at all` : ''}.`
+        + `\n\nAffected clans: ${clans.join(', ')}.`
+        + '\n\nThis permanently deletes those certificates. A re-issued certificate gets a NEW'
+        + ' number, so the old links stop working, and the recipients are NOT told. Everything'
+        + ' removed is written to the audit log first.'
+        + '\n\nCertificates that WERE signed off are left untouched.',
+      confirmLabel: `Revoke ${preview.count}`,
+      cancelLabel:  'Cancel',
+      type:         'danger',
+      onConfirm: async () => {
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          const res = await certificatesApi.revokeUnreviewed(templateId);
+          toast.success(res.message || `Revoked ${res.data?.revoked ?? preview.count} certificate(s)`);
+          await fetchHistory(false);
+        } catch (err: any) {
+          toast.error(err.message || 'Failed to revoke the unreviewed certificates');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
   const handleResendAll = () => {
     setConfirmConfig({
       isOpen:       true,
@@ -269,6 +328,18 @@ export default function CertificateHistoryLog({ templateId, userRole }: Certific
             >
               <RotateCw className="w-4 h-4" />
               Resend All
+            </button>
+          )}
+
+          {history.length > 0 && (
+            <button
+              type="button"
+              onClick={handleRevokeUnreviewed}
+              className="px-3.5 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/20 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+              title="Revoke only the certificates that no mentor or admin signed off"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              Revoke Unreviewed
             </button>
           )}
 

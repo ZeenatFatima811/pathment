@@ -90,6 +90,26 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'pending',
       validate: { isIn: [['pending', 'verified']] }
     },
+    /**
+     * How far this review has actually got. `status` answers only "has somebody
+     * signed off", and a mentor's sign-off and an admin's both wrote 'verified'
+     * — so an admin working through a whole cohort saw the same badge on their
+     * own decisions as on everyone else's, and could not tell them apart.
+     *
+     *   ai_evaluated     the AI graded it; no human has been asked yet
+     *   awaiting_mentor  sent to the clans, nobody has signed off
+     *   mentor_verified  a mentor signed off
+     *   admin_approved   an admin signed off the row, or released its clan
+     *
+     * `status` is kept in sync ('verified' for the last two) so existing
+     * queries keep working; this is the richer fact on top, not a replacement.
+     */
+    stage: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'awaiting_mentor',
+      allowNull: false,
+      validate: { isIn: [['ai_evaluated', 'awaiting_mentor', 'mentor_verified', 'admin_approved']] }
+    },
     verifiedBy: { type: DataTypes.UUID, field: 'verified_by' },
     verifiedAt: { type: DataTypes.DATE, field: 'verified_at' }
   }, { tableName: 'certificate_verifications', underscored: true });
@@ -104,6 +124,80 @@ module.exports = (sequelize, DataTypes) => {
     }
     if (models.Clan) {
       CertificateVerification.belongsTo(models.Clan, { foreignKey: 'clanId', as: 'clan' });
+    }
+  };
+
+  /**
+   * CertificateReviewQuestion — the admin asking a mentor to explain a grade.
+   *
+   * An admin who disagrees with a mentor could only accept the grade or
+   * overrule it, and overruling discards both the mentor's judgement and the
+   * reason behind it. Often the mentor simply knows something the record does
+   * not. This puts the question on the record and the answer next to it.
+   *
+   * It is NOT a stage. The grade does not move while a question is open — a
+   * questioned row is still `mentor_verified`, and folding this into `stage`
+   * would mean answering had to guess which stage to restore.
+   */
+  const CertificateReviewQuestion = sequelize.define('CertificateReviewQuestion', {
+    id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+    organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
+    templateId: { type: DataTypes.UUID, allowNull: false, field: 'template_id' },
+    /** Null for a report request, which is about a clan rather than a person. */
+    menteeId: { type: DataTypes.UUID, field: 'mentee_id' },
+    clanId: { type: DataTypes.UUID, field: 'clan_id' },
+    /**
+     * Which way this thread runs.
+     *   question        admin → mentor   "why did you give this grade?"
+     *   change_request  mentor → admin   "may I change it, because…"
+     *   report_request  mentor → admin   "please send me the report"
+     */
+    kind: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'question',
+      allowNull: false,
+      validate: { isIn: [['question', 'change_request', 'report_request']] }
+    },
+    /** What a change request is asking for, so the admin can grant it in one press. */
+    requestedTier: { type: DataTypes.STRING(50), field: 'requested_tier' },
+    requestedDecision: {
+      type: DataTypes.STRING(20),
+      field: 'requested_decision',
+      validate: { isIn: [['award', 'no_certificate']] }
+    },
+    /** Which way the admin went. `answer` holds their note either way. */
+    resolution: {
+      type: DataTypes.STRING(20),
+      validate: { isIn: [['approved', 'declined']] }
+    },
+    askedBy: { type: DataTypes.UUID, allowNull: false, field: 'asked_by' },
+    askedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'asked_at' },
+    question: { type: DataTypes.TEXT, allowNull: false },
+    /** The mentor whose decision is in question — who is asked, and notified. */
+    addressedTo: { type: DataTypes.UUID, field: 'addressed_to' },
+    answeredBy: { type: DataTypes.UUID, field: 'answered_by' },
+    answeredAt: { type: DataTypes.DATE, field: 'answered_at' },
+    answer: { type: DataTypes.TEXT },
+    status: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'open',
+      allowNull: false,
+      validate: { isIn: [['open', 'answered', 'withdrawn']] }
+    }
+  }, { tableName: 'certificate_review_questions', underscored: true });
+
+  CertificateReviewQuestion.associate = function (models) {
+    if (models.CertificateTemplate) {
+      CertificateReviewQuestion.belongsTo(models.CertificateTemplate, { foreignKey: 'templateId', as: 'template' });
+    }
+    if (models.User) {
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'menteeId', as: 'mentee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'askedBy', as: 'asker' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'addressedTo', as: 'addressee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'answeredBy', as: 'answerer' });
+    }
+    if (models.Clan) {
+      CertificateReviewQuestion.belongsTo(models.Clan, { foreignKey: 'clanId', as: 'clan' });
     }
   };
 
@@ -138,5 +232,5 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
-  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval];
+  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval, CertificateReviewQuestion];
 };

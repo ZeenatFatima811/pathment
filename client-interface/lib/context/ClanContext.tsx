@@ -16,15 +16,7 @@ function readStored(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }
 }
 
-export type ClanRole = 'lead_mentor' | 'co_mentor' | 'core_team' | 'mentee';
-export const CLAN_ROLE_LABELS: Record<ClanRole, string> = {
-  lead_mentor: 'Lead Mentor',
-  co_mentor: 'Co-Mentor',
-  core_team: 'Core Team',
-  mentee: 'Mentee',
-};
-
-export interface ClanLite { id: string; name: string; avatarUrl: string | null; role: ClanRole; }
+export interface ClanLite { id: string; name: string; }
 
 interface ClanContextValue {
   /** Clans the current user mentors (drives the mentor scope selector). */
@@ -66,11 +58,11 @@ export function ClanProvider({ children }: { children: ReactNode }) {
         if (!c) continue;
         if (MENTOR_CLAN_ROLES.includes(m.role) && !mentorSeen.has(c.id)) {
           mentorSeen.add(c.id);
-          mentor.push({ id: c.id, name: c.name, avatarUrl: c.avatarUrl ?? null, role: m.role });
+          mentor.push({ id: c.id, name: c.name });
         }
         if (m.role === 'mentee' && (m.status === 'active' || m.status === 'paused') && !menteeSeen.has(c.id)) {
           menteeSeen.add(c.id);
-          mentee.push({ id: c.id, name: c.name, avatarUrl: c.avatarUrl ?? null, role: m.role });
+          mentee.push({ id: c.id, name: c.name });
         }
       }
       return { mentor, mentee };

@@ -18,6 +18,8 @@
  * user does not actually hold resolves to nothing rather than to more. Routes
  * that ignore `req.portal` behave exactly as they did.
  */
+const { setRequestPortal } = require('../utils/auditContext');
+
 const PORTAL_ROLES = ['mentee', 'mentor', 'admin'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,6 +53,10 @@ function portalScope(req, res, next) {
     role: portalRole,
     clanId: portalRole === 'admin' ? null : parseClanId(req.headers['x-active-clan'])
   };
+  // Also onto the request context, so services that only receive `user` can
+  // narrow to the hat being worn. Without it a person holding admin saw the
+  // whole organisation on every mentor screen.
+  setRequestPortal(portalRole);
   next();
 }
 

@@ -1,4 +1,5 @@
 import type { CertificateDecision } from '@/lib/utils/certificate-decision';
+import type { ReviewStage } from '@/lib/utils/certificate-review-stage';
 import { apiClient } from './api-client';
 
 export interface CertificateElement {
@@ -199,8 +200,72 @@ export interface CertificateVerification {
   overridden: boolean;
   overrideReason: string | null;
   status: 'pending' | 'verified';
+  /** An admin has queried this grade and the mentor has not answered yet. */
+  hasOpenQuestion?: boolean;
+  /** A mentor has asked to change this approved grade; an admin must decide. */
+  hasChangeRequest?: boolean;
+  /**
+   * How far the review has got. `status` cannot distinguish a mentor's check
+   * from an admin's approval — both write 'verified' — so this carries the
+   * distinction the admin's roster needs. Optional: an older API build does not
+   * send it, and `reviewStage()` falls back to `status`.
+   */
+  stage?: ReviewStage;
   verifiedAt: string | null;
   verifiedBy: string | null;
+}
+
+/**
+ * An admin asking a mentor to explain a grade, and the mentor's answer.
+ *
+ * Not a review stage: the grade is untouched while this is open. An admin who
+ * disagreed previously had only "accept" or "overrule", and overruling throws
+ * away the mentor's reasoning along with their decision.
+ */
+export interface CertificateReviewQuestion {
+  id: string;
+  templateId: string;
+  menteeId: string;
+  menteeName: string | null;
+  clanId: string | null;
+  clanName: string | null;
+  /**
+   * Which way this thread runs. A change request is the question thread pointed
+   * the other way — mentor to admin — so it shares the shape and the UI.
+   */
+  kind: 'question' | 'change_request' | 'report_request';
+  question: string;
+  /** What a change request asks for, so an admin can grant it in one press. */
+  requestedTier?: string | null;
+  requestedDecision?: 'award' | 'no_certificate' | null;
+  /** How the admin decided it. `answer` holds their note either way. */
+  resolution?: 'approved' | 'declined' | null;
+  askedBy: string | null;
+  askedById?: string | null;
+  askedAt: string;
+  /** The mentor whose decision is in question. */
+  addressedTo: string | null;
+  addressedToName: string | null;
+  answer: string | null;
+  answeredBy: string | null;
+  answeredAt: string | null;
+  status: 'open' | 'answered' | 'withdrawn';
+}
+
+/** A certificate that went out with no signed-off grade behind it. */
+export interface UnreviewedIssuedCertificate {
+  instanceId: string;
+  menteeId: string;
+  menteeName: string | null;
+  menteeEmail: string | null;
+  clanId: string | null;
+  clanName: string | null;
+  tier: string;
+  certificateNumber: string | null;
+  issuedAt: string;
+  /** null when the mentee has no review row at all. */
+  reviewStatus: 'pending' | 'verified' | null;
+  reviewStage: ReviewStage | null;
 }
 
 /** Per-clan progress through the review round — what the admin's banner shows. */
@@ -212,10 +277,14 @@ export interface VerificationClanStatus {
   pending: number;
   overridden: number;
   noCertificate?: number;
+  /** Verified by a mentor, still waiting on the admin. */
+  mentorVerified?: number;
+  /** The admin's own approvals — what they have personally cleared. */
+  adminApproved?: number;
   complete: boolean;
   /** Released by the admin — this is what lets the clan's mentors send. */
   approved: boolean;
-  /** Signed off but not released: the admin's move. */
+  /** Verified by mentors but not yet approved by an admin: the admin's move. */
   readyToApprove: boolean;
 }
 
@@ -245,6 +314,16 @@ export interface VerificationSummary {
   overridden: number;
   noCertificate?: number;
   allVerified: boolean;
+  /** Verified by a mentor and still waiting on an admin. */
+  mentorVerified?: number;
+  /** Approved by an admin — the step that releases anything. */
+  adminApproved?: number;
+  /** Queried by an admin, awaiting the mentor's answer. */
+  questioned?: number;
+  /** Approved grades a mentor has asked to change, awaiting an admin. */
+  changeRequested?: number;
+  /** Clans whose mentor has asked for the certificate report. */
+  reportRequests?: number;
   /** Clans the admin has released for issuing. */
   approvedClans: number;
   /** Verified but not yet released — waiting on the admin. */
@@ -370,6 +449,7 @@ export interface MenteeEvidence {
   /** What a mentor decided — and, when they overruled the AI, why. */
   verification: {
     status: 'pending' | 'verified';
+    stage?: ReviewStage;
     aiTier: string | null;
     aiMatchScore: number | null;
     finalTier: string | null;
@@ -581,6 +661,63 @@ export const certificatesApi = {
 
   revokeAllTemplateCertificates: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/certificates/templates/${id}/instances`),
+
+  /**
+   * The certificates this template issued that nobody signed off. Read-only, so
+   * the admin sees who is affected before deciding.
+   */
+  unreviewedIssued: (id: string) =>
+    apiClient.get<{ success: boolean; data: { count: number; certificates: UnreviewedIssuedCertificate[] } }>(
+      `/certificates/templates/${id}/unreviewed-issued`),
+
+  /**
+   * Take just those back. Distinct from revokeAllTemplateCertificates, which
+   * destroys every certificate the template issued — no use when most of them
+   * were signed off correctly.
+   */
+  /** Questions on a template — optionally one mentee's thread, or open only. */
+  listReviewQuestions: (templateId: string, params: { menteeId?: string; openOnly?: boolean } = {}) =>
+    apiClient.get<{ success: boolean; data: { questions: CertificateReviewQuestion[]; count: number } }>(
+      `/certificates/templates/${templateId}/questions`, { params }),
+
+  /** Ask the mentor why they gave this grade. Only valid on a mentor's decision. */
+  askMentorAboutGrade: (templateId: string, menteeId: string, question: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { question: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/question`, { question }),
+
+  answerReviewQuestion: (questionId: string, answer: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { question: CertificateReviewQuestion } }>(
+      `/certificates/questions/${questionId}/answer`, { answer }),
+
+  /**
+   * A mentor asking to change a grade an admin has approved. Only valid once it
+   * is locked — before that the mentor just changes it.
+   */
+  requestGradeChange: (templateId: string, menteeId: string, body: { finalTier?: string | null; decision?: string; reason: string }) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/change-request`, body),
+
+  /** The admin's decision. Approving applies the change as their own. */
+  resolveChangeRequest: (questionId: string, approve: boolean, note?: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/questions/${questionId}/resolve`, { approve, note }),
+
+  /** A mentor asking an admin for the certificate report for their clan. */
+  requestCertificateReport: (templateId: string, body: { clanId?: string | null; note?: string } = {}) =>
+    apiClient.post<{ success: boolean; message: string; data: { request: CertificateReviewQuestion } }>(
+      `/certificates/templates/${templateId}/report-request`, body),
+
+  withdrawReviewQuestion: (questionId: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/certificates/questions/${questionId}`),
+
+  /** Chase one mentee's mentors instead of every unfinished clan. */
+  notifyMentorsForMentee: (templateId: string, menteeId: string, note?: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { notified: number; clanName: string | null } }>(
+      `/certificates/templates/${templateId}/verifications/${menteeId}/notify-mentor`, { note }),
+
+  revokeUnreviewed: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string; data: { revoked: number } }>(
+      `/certificates/templates/${id}/unreviewed-issued`),
 
   resendAllTemplateCertificates: (id: string, failedOnly: boolean) =>
     apiClient.post<{ success: boolean; message: string; updated: number }>(`/certificates/templates/${id}/resend`, { failedOnly }),
