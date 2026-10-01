@@ -22,6 +22,7 @@ const clanService = require('../../src/services/clanService');
 const authzService = require('../../src/services/authzService');
 const certificateService = require('../../src/services/certificateService');
 const mentorshipPauseService = require('../../src/services/mentorshipPauseService');
+const promotionService = require('../../src/services/promotionService');
 const { runWithRequestContext } = require('../../src/utils/auditContext');
 const { cleanDb, createAdmin, createMentee, createProgram } = require('../helpers/seed');
 
@@ -104,6 +105,22 @@ describe('a user who is both an admin and a mentor', () => {
 
       const asMentor = await inPortal('mentor', () => mentorshipPauseService.listPaused(person));
       expect(asMentor.map((row) => row.menteeId)).toEqual([myMentee.id]);
+    });
+
+    it('limits promotions to mentees in the selected mentor clan', async () => {
+      const [mineCandidate, theirCandidate] = await Promise.all([
+        models.PromotionCandidate.create({ menteeId: myMentee.id, nominatedBy: person.id, stage: 'nominated' }),
+        models.PromotionCandidate.create({ menteeId: theirMentee.id, nominatedBy: person.id, stage: 'nominated' })
+      ]);
+      const enrich = jest.spyOn(promotionService, '_enrich').mockImplementation(async (candidate) => ({ id: candidate.id }));
+
+      const asMentor = await inPortal('mentor', () => promotionService.list({
+        actorId: person.id, isAdmin: false, activeClanId: mine.id
+      }));
+      expect(asMentor.map((row) => row.id)).toEqual([mineCandidate.id]);
+      expect(asMentor.map((row) => row.id)).not.toContain(theirCandidate.id);
+
+      enrich.mockRestore();
     });
   });
 

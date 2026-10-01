@@ -4,6 +4,7 @@ const { NotFoundError, ValidationError, ConflictError } = require('../utils/erro
 const cohortService = require('./cohortService');
 const clanService = require('./clanService');
 const notificationOrchestrator = require('./notificationOrchestrator');
+const authzService = require('./authzService');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 
 const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
@@ -177,14 +178,33 @@ class PromotionService {
     }
   }
 
-  async list({ actorId, isAdmin }) {
-    const where = isAdmin ? {} : { nominatedBy: actorId };
+  async _mentorMenteeIds(actorId, activeClanId = null) {
+    let clanIds = await authzService.mentoredClanIds(actorId);
+    if (activeClanId) {
+      if (!clanIds.includes(activeClanId)) return [];
+      clanIds = [activeClanId];
+    }
+    if (!clanIds.length) return [];
+    const memberships = await models.ClanMembership.findAll({
+      where: { clanId: { [Op.in]: clanIds }, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
+      attributes: ['userId'], raw: true
+    });
+    return [...new Set(memberships.map((membership) => membership.userId))];
+  }
+
+  async list({ actorId, isAdmin, activeClanId = null }) {
+    const menteeIds = isAdmin ? null : await this._mentorMenteeIds(actorId, activeClanId);
+    const where = isAdmin ? {} : { menteeId: { [Op.in]: menteeIds.length ? menteeIds : [null] } };
     const candidates = await models.PromotionCandidate.findAll({ where, order: [['created_at', 'DESC']] });
     return Promise.all(candidates.map((c) => this._enrich(c)));
   }
 
-  async nominate(menteeId, mentorId) {
+  async nominate(menteeId, mentorId, { isAdmin = false, activeClanId = null } = {}) {
     if (!menteeId) throw new ValidationError('menteeId is required');
+    if (!isAdmin) {
+      const allowed = await this._mentorMenteeIds(mentorId, activeClanId);
+      if (!allowed.includes(menteeId)) throw new ValidationError('You can only nominate a mentee from the selected clan.');
+    }
     const existing = await models.PromotionCandidate.findOne({
       where: { menteeId, stage: { [Op.ne]: 'promoted' } }
     });
