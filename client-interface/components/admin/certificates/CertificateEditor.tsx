@@ -95,7 +95,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   const [expandedAIRows, setExpandedAIRows] = useState<Set<string>>(new Set());
 
   const {
-    aiResults, setAiResults, aiRanAt, setAiRanAt, runningAI, failedCount,
+    aiResults, setAiResults, aiRanAt, setAiRanAt, runningAI, failedCount, skippedCount,
     aiProgressCount, aiTotalCount, aiEvalMap, runAIEvaluation
   } = useAIEvaluationProgress({
     templateId,
@@ -803,7 +803,28 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   };
 
   const handleRunAIEvaluation = () => {
-    if (templateId) runAIEvaluation(templateId);
+    if (!templateId) return;
+    if (!criteria.length) {
+      toast.error('Add at least one certificate type and its criteria before evaluating.');
+      return;
+    }
+    setIsRulesDrawerOpen(true);
+  };
+
+  const startAIEvaluationFromRules = async () => {
+    if (!templateId) return;
+    try {
+      // The evaluator must use exactly what the admin is looking at. Persist
+      // any in-editor criteria changes first so it cannot grade against an old
+      // custom rule still stored on the template.
+      const committed = commitActiveTier(criteria);
+      await certificatesApi.updateTemplate(templateId, { criteria: committed });
+      setCriteria(committed);
+      setIsRulesDrawerOpen(false);
+      await runAIEvaluation(templateId);
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error, 'Could not save the criteria and start evaluation'));
+    }
   };
 
   /**
@@ -1593,6 +1614,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
 
             <AIEvaluationBanner
                   failedCount={failedCount}
+              skippedCount={skippedCount}
               count={aiResults.length}
               ranAt={aiRanAt}
               runningAI={runningAI}
@@ -1842,11 +1864,23 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
         title="Certificate Criteria & Rules"
         subtitle={`Requirements configured for the template: ${name || 'New Template'}`}
         width="md"
+        footer={templateId ? (
+          <button type="button" onClick={startAIEvaluationFromRules} disabled={runningAI || criteria.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+            {runningAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Evaluate unreviewed mentees
+          </button>
+        ) : undefined}
       >
         <div className="space-y-6">
           <p className="text-xs text-muted-foreground leading-relaxed">
             The rules below define the AI evaluation criteria for each tier. The AI uses these keywords and scoring thresholds to determine which certificate each mentee qualifies for.
           </p>
+
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs leading-relaxed text-foreground">
+            <p className="font-bold">Evaluation summary</p>
+            <p className="mt-1 text-muted-foreground">Types are checked from highest to lowest priority. Every hard threshold and required keyword must pass. A custom AI rule is mandatory for its type and must be proven by completed work, approved submission details, or mentor feedback.</p>
+            <p className="mt-2 font-medium text-violet-700 dark:text-violet-300">Human decisions are protected: signed-off, admin-approved, and already-issued certificates are skipped.</p>
+          </div>
 
           <div className="space-y-4">
             {criteria.map((c: any) => {

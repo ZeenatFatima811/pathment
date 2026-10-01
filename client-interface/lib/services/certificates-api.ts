@@ -163,10 +163,21 @@ export interface AIEvaluationResult {
   };
   blockers_analysis?: AIBlockersAnalysis;
   custom_rules_check?: Array<{
+    tierId?: string;
     rule: string;
     passed: boolean;
     evidence: string;
   }>;
+  tier_checks?: Array<{
+    tier_id: string;
+    hard_constraints_passed: boolean;
+    keywords_passed: boolean;
+    missing_keywords: string[];
+    custom_rule: string | null;
+    custom_rule_passed: boolean;
+    custom_rule_evidence: string | null;
+  }>;
+  evaluation_summary?: string;
   reasoning: string;
 }
 

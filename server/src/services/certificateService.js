@@ -669,7 +669,36 @@ class CertificateService {
       return { total: 0, runId: null, data: [] };
     }
 
-    const menteeIds = mentees.map(m => m.id);
+    const scopedMenteeIds = mentees.map(m => m.id);
+    const [issuedRows, reviewedRows] = await Promise.all([
+      models.CertificateInstance.findAll({
+        where: { templateId: id, menteeId: { [Op.in]: scopedMenteeIds } },
+        attributes: ['menteeId'], raw: true
+      }),
+      models.CertificateVerification.findAll({
+        where: {
+          templateId: id,
+          menteeId: { [Op.in]: scopedMenteeIds },
+          [Op.or]: [{ status: 'verified' }, { stage: 'admin_approved' }]
+        },
+        attributes: ['menteeId'], raw: true
+      })
+    ]);
+    const issuedIds = new Set(issuedRows.map((row) => row.menteeId));
+    const reviewedIds = new Set(reviewedRows.map((row) => row.menteeId));
+    const menteeIds = scopedMenteeIds.filter((menteeId) => !issuedIds.has(menteeId) && !reviewedIds.has(menteeId));
+    const skipped = {
+      issued: issuedIds.size,
+      reviewedOrApproved: scopedMenteeIds.filter((id) => !issuedIds.has(id) && reviewedIds.has(id)).length
+    };
+    skipped.total = skipped.issued + skipped.reviewedOrApproved;
+
+    if (menteeIds.length === 0) {
+      return { total: 0, runId: null, data: [], skipped };
+    }
+
+    // Replace an older unfinished run only after we know there is real work.
+    await models.AIEvaluationQueue.destroy({ where: { templateId: id } });
 
     // An admin run is programme-wide and carries no clan — but only from the
     // admin portal; a run started on a mentor screen is that mentor's clans.
@@ -677,7 +706,7 @@ class CertificateService {
       const { runId, total } = await this.enqueueEvaluation(
         id, menteeIds, user.id, criteria, null
       );
-      return { runId, total };
+      return { runId, total, skipped };
     }
 
     const clanIds = await this.getMentorScopedMenteeClans(user, programId, { clanId });
@@ -689,7 +718,7 @@ class CertificateService {
       const { runId, total } = await this.enqueueEvaluation(
         id, menteeIds, user.id, criteria, clanIds[0]
       );
-      return { runId, total };
+      return { runId, total, skipped };
     }
 
     const menteeClanMap = new Map();
@@ -725,7 +754,7 @@ class CertificateService {
       total += r.total;
     }
 
-    return { runId: sharedRunId, total };
+    return { runId: sharedRunId, total, skipped };
   }
 
   async getAIEvaluationStatus(runId, templateId) {
@@ -745,7 +774,7 @@ class CertificateService {
     }
 
     if (!targetRunId) {
-      return { isDone: true, runId: null, total: 0, completed: 0, failed: 0, pending: 0, data: [] };
+      return { isDone: true, runId: null, total: 0, completed: 0, failed: 0, skipped: 0, pending: 0, data: [] };
     }
 
     const jobs = await models.AIEvaluationQueue.findAll({
@@ -755,7 +784,7 @@ class CertificateService {
     });
 
     if (jobs.length === 0) {
-      return { isDone: true, runId: targetRunId, total: 0, completed: 0, failed: 0, pending: 0, data: [] };
+      return { isDone: true, runId: targetRunId, total: 0, completed: 0, failed: 0, skipped: 0, pending: 0, data: [] };
     }
 
     const total = jobs.length;
@@ -764,8 +793,9 @@ class CertificateService {
     const pending = jobs.filter(j => j.status === 'pending' || j.status === 'processing').length;
     const isDone = pending === 0;
 
+    const skipped = jobs.filter(j => j.status === 'completed' && j.result?._skipped).length;
     const completedResults = jobs
-      .filter(j => j.status === 'completed' && j.result)
+      .filter(j => j.status === 'completed' && j.result && !j.result._skipped)
       .map(j => j.result);
 
     const enrichedResults = await enrichEvaluationResults(completedResults);
@@ -776,6 +806,7 @@ class CertificateService {
       total,
       completed,
       failed,
+      skipped,
       pending,
       data: enrichedResults,
       ranAt: isDone ? new Date().toISOString() : null
@@ -876,7 +907,9 @@ class CertificateService {
           desc:       t.description ? t.description.slice(0, 300) : undefined,
           rating:     t.rating,
           difficulty: t.difficulty,
-          points_pct: t.pointsPct
+          points_pct: t.pointsPct,
+          submission_evidence: t.status === 'completed' ? t.submissionEvidence : undefined,
+          mentor_evidence: t.status === 'completed' ? t.mentorEvidence : undefined
         })),
         blockers: {
           total:            item.menteePayload.blockers?.total            ?? 0,
@@ -1026,6 +1059,7 @@ class CertificateService {
         Array.isArray(aiItem.custom_rules_check) ? aiItem.custom_rules_check
           : (Array.isArray(aiItem.customRulesCheck) ? aiItem.customRulesCheck : [])
       ).map(crc => ({
+        tierId:   String(crc.tier_id || crc.tierId || '').trim(),
         rule:     String(crc.rule || crc.name || 'Custom Qualification Rule').trim(),
         passed:   Boolean(crc.passed ?? crc.status === 'passed'),
         evidence: String(crc.evidence || crc.reason || '').trim()
@@ -1036,28 +1070,44 @@ class CertificateService {
       let qualifiedTier = null;
       const normalizedMatched = matchedKw.map(k => String(k).toLowerCase());
       const hasKeywordEvidence = Array.isArray(aiItem.matched_keywords) || Array.isArray(aiItem.matchedKeywords);
+      const tierChecks = [];
 
       for (const tierConfig of sortedCriteria) {
         const tierId = tierConfig.id;
+        const hardPassed = Object.values(livePreCheck.hardChecks[tierId] || {}).every(Boolean);
+        const requiredKw = Array.isArray(tierConfig.keywords) ? tierConfig.keywords : [];
+        const unfulfilledKw = requiredKw.filter(kw => !normalizedMatched.includes(String(kw).toLowerCase()));
+        const configuredRule = String(tierConfig.customRule || '').trim();
+        const ruleCheck = configuredRule
+          ? customRulesCheck.find((check) => check.tierId === tierId || check.rule.toLowerCase() === configuredRule.toLowerCase())
+          : null;
+        const ruleProven = configuredRule
+          ? ruleCheck?.passed === true && Boolean(ruleCheck.evidence)
+          : true;
 
-        if (!Object.values(livePreCheck.hardChecks[tierId] || {}).every(Boolean)) {
+        tierChecks.push({
+          tier_id: tierId,
+          hard_constraints_passed: hardPassed,
+          keywords_passed: requiredKw.length === 0 || (hasKeywordEvidence && unfulfilledKw.length === 0),
+          missing_keywords: unfulfilledKw,
+          custom_rule: configuredRule || null,
+          custom_rule_passed: ruleProven,
+          custom_rule_evidence: ruleCheck?.evidence || null
+        });
+
+        if (!hardPassed) {
           continue;
         }
 
-        const requiredKw = Array.isArray(tierConfig.keywords) ? tierConfig.keywords : [];
-        if ((requiredKw.length > 0 && !hasKeywordEvidence) || (tierConfig.customRule?.trim() && !customRulesCheck.length)) {
+        if ((requiredKw.length > 0 && !hasKeywordEvidence) || (configuredRule && !ruleCheck)) {
           return { menteeId, result: this.buildFallbackResult(menteePayload, livePreCheck) };
         }
-        const unfulfilledKw = requiredKw.filter(kw => !normalizedMatched.includes(String(kw).toLowerCase()));
         if (unfulfilledKw.length > 0) {
           continue;
         }
 
-        if (tierConfig.customRule?.trim()) {
-          const failedRule = customRulesCheck.some(c => c.passed === false);
-          if (failedRule) {
-            continue;
-          }
+        if (configuredRule && !ruleProven) {
+          continue;
         }
 
         qualifiedTier = tierId;
@@ -1090,6 +1140,10 @@ class CertificateService {
         matched_keywords:     matchedKw,
         missing_keywords:     missingKw,
         custom_rules_check:   customRulesCheck,
+        tier_checks:          tierChecks,
+        evaluation_summary:   validTier
+          ? `Award ${sortedCriteria.find((tier) => tier.id === validTier)?.name || validTier}: hard thresholds, required keywords, and its custom rule are satisfied.`
+          : 'No configured certificate tier has complete evidence for every required threshold, keyword, and custom rule.',
         overall_percentage:   Math.min(100, Math.max(0, Number(menteePayload.normalized_score) || 0)),
         completion_rate:      menteePayload.completion_rate,
         on_time_rate:         menteePayload.on_time_rate,
@@ -1149,8 +1203,6 @@ class CertificateService {
 
   async enqueueEvaluation(templateId, menteeIds, triggeredBy, criteria, clanId = null, runId = null) {
     const sortedCriteria = sortCriteriaByPriority(criteria);
-
-    await models.AIEvaluationQueue.destroy({ where: { templateId } });
 
     const payloads = await aggregateMenteeData(menteeIds, clanId);
     const jobRunId = runId || uuidv4();

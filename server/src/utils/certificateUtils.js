@@ -167,7 +167,8 @@ EVALUATION INSTRUCTIONS:
    - "tasks": List of assigned tasks with "title", "status" ("completed"|"in_progress"|"assigned"|"submitted"), "type" ("project"|"assignment"|"practical"|"exercise"|"quiz"|"custom"), "isCustom" (boolean true for mentor custom tasks), "rating", and "desc".
      CRITICAL RULE 1: Only tasks with status === "completed" count as finished work. Tasks with status "assigned", "in_progress", or "submitted" are UNFINISHED and CANNOT satisfy custom rules or keywords!
      CRITICAL RULE 2: CUSTOM QUALIFICATION RULE & TECH STACK CHECKING:
-     - Search completed tasks (status === "completed") for titles, descriptions, task types, or isCustom === true flags that match the tier's "Custom Qualification Rule" (e.g. "must have multivendor project done", "at least 2 custom tasks", "project type task").
+     - Search completed tasks (status === "completed") using the assignment title/description, "submission_evidence", and "mentor_evidence". Approved submission and mentor evidence are stronger proof than an assignment title.
+     - A custom rule is MANDATORY for its own tier. Mark it passed only when the supplied evidence proves it. If evidence is absent or ambiguous, mark it failed; never infer completion from the assignment being present.
      - Match keywords against completed task titles and descriptions loosely based ONLY on the explicit keywords specified for that tier.
 
      CRITICAL RULE 3: STRICT EXPLICIT CRITERIA ONLY (NO HALLUCINATED TECH STACK REQUIREMENTS):
@@ -196,7 +197,7 @@ EVALUATION INSTRUCTIONS:
    - "match_score": Integer (0-100) reflecting relevance and task quality.
    - "matched_keywords": Array of target keywords matched in completed tasks.
    - "missing_keywords": Array of target keywords missing from completed tasks.
-   - "custom_rules_check": Array of [{ "rule": "<rule name/description>", "passed": boolean, "evidence": "<exact task title or metric reason>" }] detailing pass/fail status for custom rules & keyword checks.
+   - "custom_rules_check": One entry for EVERY configured custom rule, shaped as [{ "tier_id": "<exact tier id>", "rule": "<exact configured rule>", "passed": boolean, "evidence": "<exact completed task/submission/mentor evidence, or why proof is missing>" }]. Never reuse one tier's rule verdict for another tier.
    - "blockers_analysis": { "total": number, "resolved": number, "open": number, "impact": "Low"|"Medium"|"High", "summary": "brief summary" }
    - "reasoning": 3-4 sentence detailed narrative explicitly stating hard_constraint_failures (if any), custom rules passed/failed, matched keywords, task performance, and why the tier was assigned or stepped down. NEVER invent unlisted technology names!
 
@@ -211,7 +212,7 @@ EVALUATION INSTRUCTIONS:
     "matched_keywords": ["React", "Node.js"],
     "missing_keywords": [],
     "custom_rules_check": [
-      { "rule": "Custom Qualification Rule", "passed": true, "evidence": "Completed multi-step form assignment" }
+      { "tier_id": "gold", "rule": "Custom Qualification Rule", "passed": true, "evidence": "Completed multi-step form assignment; approved submission says …" }
     ],
     "overall_percentage": 92,
     "blockers_analysis": { "total": 0, "resolved": 0, "open": 0, "impact": "Low", "summary": "No blockers" },
@@ -360,7 +361,7 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
   const tasks = await models.AssignedTask.findAll({
     where: taskWhere,
     attributes: [
-      'menteeId', 'mentorId', 'status', 'pointsAwarded', 'pointsBase',
+      'id', 'menteeId', 'mentorId', 'status', 'pointsAwarded', 'pointsBase',
       'finalRating', 'isLate', 'completedAt', 'isCustomTask', 'dueDate',
       'titleOverride', 'descriptionOverride'
     ],
@@ -375,6 +376,31 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
     }],
     raw: false
   });
+
+  // Custom rules must be judged against what the mentee actually submitted
+  // and what the mentor approved—not merely the assignment title. Fetch this
+  // evidence in two batched queries to avoid an N+1 request per task.
+  const completedTaskIds = tasks.filter((task) => task.status === 'completed').map((task) => task.id);
+  const [approvedSubmissions, approvedFeedback] = completedTaskIds.length ? await Promise.all([
+    models.TaskSubmission.findAll({
+      where: { assignedTaskId: { [Op.in]: completedTaskIds }, status: 'approved' },
+      attributes: ['assignedTaskId', 'version', 'submissionText', 'submissionUrls'],
+      order: [['version', 'DESC']], raw: true
+    }),
+    models.TaskFeedback.findAll({
+      where: { assignedTaskId: { [Op.in]: completedTaskIds }, isApproved: true },
+      attributes: ['assignedTaskId', 'feedbackText', 'criteriaMet', 'checkedCriteria', 'rating', 'decision'],
+      order: [['createdAt', 'DESC']], raw: true
+    })
+  ]) : [[], []];
+  const submissionByTask = new Map();
+  for (const submission of approvedSubmissions) {
+    if (!submissionByTask.has(submission.assignedTaskId)) submissionByTask.set(submission.assignedTaskId, submission);
+  }
+  const feedbackByTask = new Map();
+  for (const feedback of approvedFeedback) {
+    if (!feedbackByTask.has(feedback.assignedTaskId)) feedbackByTask.set(feedback.assignedTaskId, feedback);
+  }
 
   const blockers = await models.Blocker.findAll({
     where: { menteeId: { [Op.in]: menteeIds } },
@@ -439,6 +465,8 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
       const taskDesc  = t.descriptionOverride || t.roadmapTask?.description || null;
       const base      = (t.pointsBase && t.pointsBase > 0) ? t.pointsBase : (t.roadmapTask?.pointsBase || 10);
       const awarded   = t.pointsAwarded ?? 0;
+      const submission = submissionByTask.get(t.id);
+      const feedback = feedbackByTask.get(t.id);
 
       totalBase += base;
       if (t.status === 'completed') {
@@ -460,7 +488,19 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
         isLate:      t.isLate,
         pointsPct:   t.status === 'completed' && base > 0
           ? Math.round((Math.min(awarded, base) / base) * 100)
-          : null
+          : null,
+        submissionEvidence: t.status === 'completed' && submission?.submissionText
+          ? String(submission.submissionText).slice(0, 700)
+          : null,
+        submissionUrls: t.status === 'completed' && Array.isArray(submission?.submissionUrls)
+          ? submission.submissionUrls.slice(0, 5)
+          : [],
+        mentorEvidence: t.status === 'completed' && feedback ? {
+          feedback: String(feedback.feedbackText || '').slice(0, 500),
+          criteriaMet: feedback.criteriaMet || feedback.checkedCriteria || [],
+          rating: feedback.rating == null ? null : Number(feedback.rating),
+          decision: feedback.decision || 'approved'
+        } : null
       });
     }
 
@@ -600,4 +640,3 @@ module.exports = {
   buildBatchMenteePrompt,
   aggregateMenteeData
 };
-

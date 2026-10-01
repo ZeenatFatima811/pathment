@@ -126,10 +126,17 @@ const resendAllTemplateCertificates = catchAsync(async (req, res) => {
 const runAIEvaluation = catchAsync(async (req, res) => {
   const result = await certificateService.runAIEvaluation(req.params.id, req.query.mentorId, req.user, { clanId: portalOf(req).clanId });
   if (result.total === 0) {
-    return res.status(200).json(successResponse('No active mentees found in this program.', [], 200));
+    const skipped = result.skipped?.total || 0;
+    return res.status(200).json(successResponse(
+      skipped
+        ? `Nothing to evaluate. ${skipped} mentee(s) were skipped because their certificate was reviewed, approved, or issued.`
+        : 'No active mentees found in this program.',
+      result,
+      200
+    ));
   }
   res.status(202).json(successResponse(
-    `Queued ${result.total} mentee evaluations. Results will arrive via real-time updates.`,
+    `Queued ${result.total} mentee evaluations${result.skipped?.total ? `; skipped ${result.skipped.total} finalized mentee(s)` : ''}. Results will arrive via real-time updates.`,
     result,
     202
   ));

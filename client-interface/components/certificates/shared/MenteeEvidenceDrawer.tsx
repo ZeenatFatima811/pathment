@@ -497,6 +497,16 @@ export function MenteeEvidenceDrawer({
                 <p className="text-xs text-foreground leading-relaxed">
                   {evidence.ai.reasoning || 'No reasoning was recorded for this evaluation.'}
                 </p>
+                {evidence.ai.evaluation_summary && (
+                  <div className="rounded-xl border border-violet-500/15 bg-background/70 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-600 dark:text-violet-400">
+                      Evaluation summary
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-foreground">
+                      {evidence.ai.evaluation_summary}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {(evidence.ai.matched_keywords?.length > 0 || evidence.ai.missing_keywords?.length > 0) && (
