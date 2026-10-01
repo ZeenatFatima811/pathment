@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Building2, Loader2 } from 'lucide-react';
 import { tokenStore } from '@/lib/services/token-store';
-import { validWorkspaceSlug } from '@/lib/services/workspace-scope';
+import { organizationsApi } from '@/lib/services/organizations-api';
+import { activeWorkspaceSlug, switchWorkspace, validWorkspaceSlug } from '@/lib/services/workspace-scope';
 
 export default function HomePage() {
   const router = useRouter();
@@ -16,7 +17,32 @@ export default function HomePage() {
     ?? rawWorkspace.replace(/^https?:\/\//, '').replace(/^app\.pathment\.me\//, '').replace(/^\/|\/$/g, '');
 
   useEffect(() => {
-    if (hasSession) router.replace('/workspaces');
+    if (!hasSession) return;
+
+    let active = true;
+    const openAccount = async () => {
+      try {
+        const workspaces = await organizationsApi.mine();
+        if (!active) return;
+
+        const remembered = activeWorkspaceSlug();
+        const destination = workspaces.find(item => item.slug === remembered)
+          ?? (workspaces.length === 1 ? workspaces[0] : null);
+
+        if (destination) switchWorkspace(destination.slug);
+        else router.replace('/workspaces');
+      } catch {
+        if (!active) return;
+        // Do not strand an existing session during a temporary account lookup
+        // failure. The workspace-scoped auth check remains authoritative.
+        const remembered = activeWorkspaceSlug();
+        if (remembered) switchWorkspace(remembered);
+        else router.replace('/workspaces');
+      }
+    };
+
+    void openAccount();
+    return () => { active = false; };
   }, [hasSession, router]);
 
   const openWorkspace = (event: FormEvent) => {

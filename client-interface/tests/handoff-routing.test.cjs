@@ -21,6 +21,7 @@ function storage() {
 function browser(url) {
   const location = new URL(url);
   location.replace = value => { location.destination = value; };
+  location.assign = value => { location.destination = value; };
   return { location, history: { replaceState: () => {} } };
 }
 function fixture(url, post = async () => { throw new Error('Unexpected request'); }, options = {}) {
@@ -51,6 +52,8 @@ test('workspace selection rejects reserved hosts, invalid storage, and invalid e
   assert.throws(() => f.scope.switchWorkspace('../evil'));
   f.window.location.pathname = '/w/other/mentor/dashboard';
   assert.equal(f.scope.activeWorkspaceSlug(), 'other');
+  f.scope.switchWorkspace('acme');
+  assert.equal(f.window.location.destination, 'https://app.pathment.me/w/acme/login');
 });
 
 test('redirects stay inside the selected workspace', () => {
