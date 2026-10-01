@@ -233,7 +233,7 @@ class CertificateVerificationService {
    * is an override: the AI's tier is preserved alongside it so the admin can
    * see what was changed, by whom and why.
    */
-  async verify(templateId, menteeId, { decision, finalTier, reason = null } = {}, user, { notify = true, transaction: existingTransaction } = {}) {
+  async verify(templateId, menteeId, { decision, finalTier, reason = null, criteriaChecks } = {}, user, { notify = true, transaction: existingTransaction } = {}) {
     const execute = async transaction => {
       // Issuance, review, and approval use the same lock so a changed decision
       // cannot race with sending a certificate under an older approval.
@@ -248,6 +248,20 @@ class CertificateVerificationService {
       if (nextDecision === 'no_certificate' && finalTier) throw new ValidationError('No certificate cannot have a certificate tier.');
       const tier = nextDecision === 'award' ? (finalTier ?? row.aiTier) : null;
       if (nextDecision === 'award') this._assertTierExists(template, tier);
+      const tierConfig = nextDecision === 'award'
+        ? (template.criteria || []).find((item) => item.id === tier)
+        : null;
+      const requiredChecks = Array.isArray(tierConfig?.reviewChecklist)
+        ? tierConfig.reviewChecklist.map((item) => String(item).trim()).filter(Boolean)
+        : [];
+      const submittedChecks = Array.isArray(criteriaChecks)
+        ? criteriaChecks.map((item) => String(item).trim()).filter(Boolean)
+        : (row.criteriaChecks || []);
+      const checked = new Set(submittedChecks);
+      const missingChecks = requiredChecks.filter((item) => !checked.has(item));
+      if (missingChecks.length) {
+        throw new ValidationError(`Confirm every checklist item for ${tierConfig?.name || tier}: ${missingChecks.join('; ')}`);
+      }
       const overridden = nextDecision !== aiDecision || tier !== row.aiTier;
       const previousDecision = row.decision === 'no_certificate' ? 'no_certificate' : (row.finalTier ? 'award' : 'undecided');
       const changed = previousDecision !== nextDecision || row.finalTier !== tier;
@@ -279,6 +293,7 @@ class CertificateVerificationService {
       row.finalTier = tier;
       row.overridden = overridden;
       row.overrideReason = decisionReason;
+      row.criteriaChecks = nextDecision === 'award' ? requiredChecks : [];
       row.status = 'verified';
       // An admin's sign-off is also the approval; a mentor's is only the check.
       // Writing one 'verified' for both is what left an admin unable to tell
@@ -328,7 +343,7 @@ class CertificateVerificationService {
       const rows = [];
       for (const decision of decisions) {
         rows.push(await this.verify(templateId, decision.menteeId,
-          { decision: decision.decision, finalTier: decision.finalTier, reason: decision.reason },
+          { decision: decision.decision, finalTier: decision.finalTier, reason: decision.reason, criteriaChecks: decision.criteriaChecks },
           user, { notify: false, transaction }));
       }
       return rows;
@@ -766,6 +781,7 @@ class CertificateVerificationService {
       decisionHistory: json.decisionHistory || [],
       overridden: Boolean(json.overridden),
       overrideReason: json.overrideReason || null,
+      criteriaChecks: Array.isArray(json.criteriaChecks) ? json.criteriaChecks : [],
       status: json.status,
       stage: json.stage || (json.status === 'verified' ? 'mentor_verified' : 'awaiting_mentor'),
       verifiedAt: json.verifiedAt || null,

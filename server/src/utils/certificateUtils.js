@@ -130,6 +130,10 @@ function buildTierDescriptions(criteria) {
     if (c.minAvgRating != null) lines.push(`  - Min avg rating: ${c.minAvgRating}`);
     if (Array.isArray(c.keywords) && c.keywords.length > 0) lines.push(`  - Required Tech Stack / Keywords: ${c.keywords.join(', ')}`);
     if (c.customRule?.trim()) lines.push(`  - Custom Qualification Rule: "${c.customRule.trim()}"`);
+    if (Array.isArray(c.reviewChecklist) && c.reviewChecklist.length > 0) {
+      lines.push('  - Required Review Checklist (every item needs direct evidence):');
+      c.reviewChecklist.forEach((item) => lines.push(`    * ${String(item).trim()}`));
+    }
     return lines.join('\n');
   }).join('\n\n');
 }
@@ -169,6 +173,7 @@ EVALUATION INSTRUCTIONS:
      CRITICAL RULE 2: CUSTOM QUALIFICATION RULE & TECH STACK CHECKING:
      - Search completed tasks (status === "completed") using the assignment title/description, "submission_evidence", and "mentor_evidence". Approved submission and mentor evidence are stronger proof than an assignment title.
      - A custom rule is MANDATORY for its own tier. Mark it passed only when the supplied evidence proves it. If evidence is absent or ambiguous, mark it failed; never infer completion from the assignment being present.
+     - Every Required Review Checklist item is also MANDATORY for its own tier. Evaluate each item independently from completed work, approved submission evidence, or mentor feedback. Missing or ambiguous proof means failed.
      - Match keywords against completed task titles and descriptions loosely based ONLY on the explicit keywords specified for that tier.
 
      CRITICAL RULE 3: STRICT EXPLICIT CRITERIA ONLY (NO HALLUCINATED TECH STACK REQUIREMENTS):
@@ -183,8 +188,8 @@ EVALUATION INSTRUCTIONS:
      - DO NOT invent, guess, or claim missing technologies (like Node, MongoDB, REST design, etc.) as the reason for stepping down! Your reasoning MUST be grounded 100% on actual metric failures from hard_constraint_failures or missing explicit keywords.
 
      CRITICAL RULE 5: MANDATORY MAXIMUM QUALIFIED TIER ASSIGNMENT (NO UNJUSTIFIED STEP-DOWNS):
-     - If a mentee's "max_eligible_tier" is "${topTierId}", AND the mentee's completed tasks satisfy explicit keywords (or if no keywords are required) AND custom rule (or if no custom rule is set) for "${topTierName}", YOU MUST ASSIGN "certificate_tier": "${topTierId}"!
-     - Stepping down from "max_eligible_tier" to a lower tier is STRICTLY PROHIBITED unless there is an explicit missing keyword or explicit failed Custom Qualification Rule!
+     - If a mentee's "max_eligible_tier" is "${topTierId}", AND the mentee's completed tasks satisfy explicit keywords, custom rule, and every configured review checklist item for "${topTierName}" (or those are not configured), YOU MUST ASSIGN "certificate_tier": "${topTierId}"!
+     - Stepping down from "max_eligible_tier" to a lower tier is STRICTLY PROHIBITED unless there is an explicit missing keyword, failed Custom Qualification Rule, or failed review checklist item!
      - DO NOT invent "cohort-relative" or unlisted threshold excuses to downgrade a mentee!
 
 2. DYNAMIC TIER STEP-DOWN HIERARCHY (highest to lowest): ${hierarchy}.
@@ -192,12 +197,13 @@ EVALUATION INSTRUCTIONS:
 3. FOR EVERY MENTEE IN THE INPUT ARRAY, EVALUATE:
    - When no configured certificate type qualifies, use decision "no_certificate", certificate_tier null, and explain the unmet criteria. Never invent a participation award.
    - "certificate_tier": Check the tier's "Custom Qualification Rule" and "Required Tech Stack / Keywords" against the mentee's completed tasks.
-     * If the mentee satisfies the Custom Rule and explicit Tech Stack for "max_eligible_tier", assign "certificate_tier": "max_eligible_tier".
-     * If the mentee FAILS the explicit Custom Rule or explicit Tech Stack for "max_eligible_tier", STEP DOWN to the next lower tier in the hierarchy. Do NOT jump straight to the bottom! Assign the highest lower tier whose rules the mentee DOES satisfy.
+     * If the mentee satisfies the Custom Rule, explicit Tech Stack, and every configured review checklist item for "max_eligible_tier", assign "certificate_tier": "max_eligible_tier".
+     * If the mentee FAILS the explicit Custom Rule, explicit Tech Stack, or any configured review checklist item for "max_eligible_tier", STEP DOWN to the next lower tier in the hierarchy. Do NOT jump straight to the bottom! Assign the highest lower tier whose rules the mentee DOES satisfy.
    - "match_score": Integer (0-100) reflecting relevance and task quality.
    - "matched_keywords": Array of target keywords matched in completed tasks.
    - "missing_keywords": Array of target keywords missing from completed tasks.
    - "custom_rules_check": One entry for EVERY configured custom rule, shaped as [{ "tier_id": "<exact tier id>", "rule": "<exact configured rule>", "passed": boolean, "evidence": "<exact completed task/submission/mentor evidence, or why proof is missing>" }]. Never reuse one tier's rule verdict for another tier.
+   - "criteria_checks": One entry for EVERY configured review checklist item, shaped as [{ "tier_id": "<exact tier id>", "item": "<exact configured checklist text>", "passed": boolean, "evidence": "<exact completed task/submission/mentor evidence, or why proof is missing>" }]. Never mark an item passed without evidence.
    - "blockers_analysis": { "total": number, "resolved": number, "open": number, "impact": "Low"|"Medium"|"High", "summary": "brief summary" }
    - "reasoning": 3-4 sentence detailed narrative explicitly stating hard_constraint_failures (if any), custom rules passed/failed, matched keywords, task performance, and why the tier was assigned or stepped down. NEVER invent unlisted technology names!
 
@@ -213,6 +219,9 @@ EVALUATION INSTRUCTIONS:
     "missing_keywords": [],
     "custom_rules_check": [
       { "tier_id": "gold", "rule": "Custom Qualification Rule", "passed": true, "evidence": "Completed multi-step form assignment; approved submission says …" }
+    ],
+    "criteria_checks": [
+      { "tier_id": "gold", "item": "Completed the multi-vendor project", "passed": true, "evidence": "Approved Multi-vendor project submission …" }
     ],
     "overall_percentage": 92,
     "blockers_analysis": { "total": 0, "resolved": 0, "open": 0, "impact": "Low", "summary": "No blockers" },

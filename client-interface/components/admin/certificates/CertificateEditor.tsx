@@ -330,7 +330,8 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
               minOnTimeRate:     c.minOnTimeRate ?? null,
               minAvgRating:      c.minAvgRating ?? null,
               minAttendanceRate: c.minAttendanceRate ?? null,
-              customRule:        c.customRule ?? ''
+              customRule:        c.customRule ?? '',
+              reviewChecklist:   Array.isArray(c.reviewChecklist) ? c.reviewChecklist : []
             }));
             loaded.sort((a: any, b: any) => (a.priority ?? Infinity) - (b.priority ?? Infinity));
             setCriteria(loaded);
@@ -1878,7 +1879,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
 
           <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs leading-relaxed text-foreground">
             <p className="font-bold">Evaluation summary</p>
-            <p className="mt-1 text-muted-foreground">Types are checked from highest to lowest priority. Every hard threshold and required keyword must pass. A custom AI rule is mandatory for its type and must be proven by completed work, approved submission details, or mentor feedback.</p>
+            <p className="mt-1 text-muted-foreground">Types are checked from highest to lowest priority. Every hard threshold, required keyword, custom AI rule, and optional admin checklist item must pass. Qualitative checks require proof from completed work, approved submission details, or mentor feedback.</p>
             <p className="mt-2 font-medium text-violet-700 dark:text-violet-300">Human decisions are protected: signed-off, admin-approved, and already-issued certificates are skipped.</p>
           </div>
 
@@ -1893,6 +1894,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
               const minOnTime = c.minOnTimeRate ?? 0;
               const minRating = c.minAvgRating ?? 0;
               const customRule = c.customRule?.trim() ?? '';
+              const reviewChecklist: string[] = c.reviewChecklist || [];
 
               return (
                 <div key={c.id} className="p-4 rounded-2xl border border-border bg-card shadow-2xs space-y-3">
@@ -1902,7 +1904,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                   </div>
 
                   <div className="space-y-3">
-                    {isParticipation && kws.length === 0 && minScore === 0 ? (
+                    {isParticipation && kws.length === 0 && minScore === 0 && reviewChecklist.length === 0 ? (
                       <p className="text-xs text-muted-foreground font-semibold italic">
                         Awarded to all active participants (no minimum requirements).
                       </p>
@@ -1954,6 +1956,14 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                           <div className="space-y-1">
                             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Custom AI Rule</p>
                             <p className="text-[11px] text-foreground italic bg-muted/30 rounded-xl px-3 py-2 leading-relaxed">"{customRule}"</p>
+                          </div>
+                        )}
+                        {reviewChecklist.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Mentor &amp; AI checklist</p>
+                            <div className="space-y-1">
+                              {reviewChecklist.map((item) => <p key={item} className="rounded-lg bg-muted/30 px-3 py-2 text-[11px] text-foreground">✓ {item}</p>)}
+                            </div>
                           </div>
                         )}
                       </>

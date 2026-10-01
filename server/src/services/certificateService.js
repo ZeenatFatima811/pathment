@@ -484,7 +484,8 @@ class CertificateService {
         minCompletionRate: c.minCompletionRate ?? null,
         minOnTimeRate:     c.minOnTimeRate     ?? null,
         minAvgRating:      c.minAvgRating      ?? null,
-        minAttendanceRate: c.minAttendanceRate ?? null
+        minAttendanceRate: c.minAttendanceRate ?? null,
+        reviewChecklist: Array.isArray(c.reviewChecklist) ? c.reviewChecklist : []
       })),
       metrics,
       roadmaps,
@@ -492,6 +493,7 @@ class CertificateService {
       ai,
       verification: verification ? {
         status:         verification.status,
+        stage:          verification.stage,
         aiTier:         verification.aiTier,
         aiMatchScore:   verification.aiMatchScore,
         finalTier:      verification.finalTier,
@@ -500,6 +502,7 @@ class CertificateService {
         decisionHistory: user?.id === menteeId ? [] : verification.decisionHistory || [],
         overridden:     verification.overridden,
         overrideReason: verification.overrideReason,
+        criteriaChecks: Array.isArray(verification.criteriaChecks) ? verification.criteriaChecks : [],
         verifiedAt:     verification.verifiedAt,
         verifiedBy:     verification.verifier
           ? `${verification.verifier.firstName || ''} ${verification.verifier.lastName || ''}`.trim()
@@ -1064,6 +1067,15 @@ class CertificateService {
         passed:   Boolean(crc.passed ?? crc.status === 'passed'),
         evidence: String(crc.evidence || crc.reason || '').trim()
       }));
+      const criteriaChecks = (
+        Array.isArray(aiItem.criteria_checks) ? aiItem.criteria_checks
+          : (Array.isArray(aiItem.criteriaChecks) ? aiItem.criteriaChecks : [])
+      ).map(check => ({
+        tierId: String(check.tier_id || check.tierId || '').trim(),
+        item: String(check.item || check.criterion || '').trim(),
+        passed: Boolean(check.passed ?? check.status === 'passed'),
+        evidence: String(check.evidence || check.reason || '').trim()
+      }));
 
       const blockersAnalysisObj = aiItem.blockers_analysis || aiItem.blockersAnalysis || {};
 
@@ -1084,6 +1096,13 @@ class CertificateService {
         const ruleProven = configuredRule
           ? ruleCheck?.passed === true && Boolean(ruleCheck.evidence)
           : true;
+        const requiredChecklist = Array.isArray(tierConfig.reviewChecklist)
+          ? tierConfig.reviewChecklist.map((item) => String(item).trim()).filter(Boolean)
+          : [];
+        const checklistResults = requiredChecklist.map((item) => criteriaChecks.find((check) =>
+          check.tierId === tierId && check.item.toLowerCase() === item.toLowerCase()
+        ));
+        const checklistComplete = checklistResults.every((check) => check?.passed === true && Boolean(check.evidence));
 
         tierChecks.push({
           tier_id: tierId,
@@ -1092,14 +1111,21 @@ class CertificateService {
           missing_keywords: unfulfilledKw,
           custom_rule: configuredRule || null,
           custom_rule_passed: ruleProven,
-          custom_rule_evidence: ruleCheck?.evidence || null
+          custom_rule_evidence: ruleCheck?.evidence || null,
+          checklist_passed: checklistComplete,
+          checklist: requiredChecklist.map((item, index) => ({
+            item,
+            passed: checklistResults[index]?.passed === true && Boolean(checklistResults[index]?.evidence),
+            evidence: checklistResults[index]?.evidence || null
+          }))
         });
 
         if (!hardPassed) {
           continue;
         }
 
-        if ((requiredKw.length > 0 && !hasKeywordEvidence) || (configuredRule && !ruleCheck)) {
+        if ((requiredKw.length > 0 && !hasKeywordEvidence) || (configuredRule && !ruleCheck) ||
+            (requiredChecklist.length > 0 && checklistResults.some((check) => !check))) {
           return { menteeId, result: this.buildFallbackResult(menteePayload, livePreCheck) };
         }
         if (unfulfilledKw.length > 0) {
@@ -1109,6 +1135,7 @@ class CertificateService {
         if (configuredRule && !ruleProven) {
           continue;
         }
+        if (!checklistComplete) continue;
 
         qualifiedTier = tierId;
         break;
@@ -1140,10 +1167,11 @@ class CertificateService {
         matched_keywords:     matchedKw,
         missing_keywords:     missingKw,
         custom_rules_check:   customRulesCheck,
+        criteria_checks:      criteriaChecks,
         tier_checks:          tierChecks,
         evaluation_summary:   validTier
-          ? `Award ${sortedCriteria.find((tier) => tier.id === validTier)?.name || validTier}: hard thresholds, required keywords, and its custom rule are satisfied.`
-          : 'No configured certificate tier has complete evidence for every required threshold, keyword, and custom rule.',
+          ? `Award ${sortedCriteria.find((tier) => tier.id === validTier)?.name || validTier}: hard thresholds, required keywords, custom rule, and configured checklist are satisfied.`
+          : 'No configured certificate tier has complete evidence for every required threshold, keyword, custom rule, and checklist item.',
         overall_percentage:   Math.min(100, Math.max(0, Number(menteePayload.normalized_score) || 0)),
         completion_rate:      menteePayload.completion_rate,
         on_time_rate:         menteePayload.on_time_rate,

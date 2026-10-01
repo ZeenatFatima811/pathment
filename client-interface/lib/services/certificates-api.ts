@@ -71,7 +71,9 @@ export interface CertificateTemplate {
     minCompletionRate?: number | null;
     minOnTimeRate?: number | null;
     minAvgRating?: number | null;
+    minAttendanceRate?: number | null;
     customRule?: string | null;
+    reviewChecklist?: string[];
   }>;
   aiEvaluation?: { results: AIEvaluationResult[]; ranAt: string } | null;
   aiEvaluationRanAt?: string | null;
@@ -168,6 +170,12 @@ export interface AIEvaluationResult {
     passed: boolean;
     evidence: string;
   }>;
+  criteria_checks?: Array<{
+    tierId?: string;
+    item: string;
+    passed: boolean;
+    evidence: string;
+  }>;
   tier_checks?: Array<{
     tier_id: string;
     hard_constraints_passed: boolean;
@@ -176,6 +184,8 @@ export interface AIEvaluationResult {
     custom_rule: string | null;
     custom_rule_passed: boolean;
     custom_rule_evidence: string | null;
+    checklist_passed?: boolean;
+    checklist?: Array<{ item: string; passed: boolean; evidence: string | null }>;
   }>;
   evaluation_summary?: string;
   reasoning: string;
@@ -210,6 +220,7 @@ export interface CertificateVerification {
   decisionHistory: CertificateDecisionHistoryEntry[];
   overridden: boolean;
   overrideReason: string | null;
+  criteriaChecks: string[];
   status: 'pending' | 'verified';
   /** An admin has queried this grade and the mentor has not answered yet. */
   hasOpenQuestion?: boolean;
@@ -432,6 +443,7 @@ export interface TierThresholds {
   minOnTimeRate: number | null;
   minAvgRating: number | null;
   minAttendanceRate: number | null;
+  reviewChecklist: string[];
 }
 
 export interface TierConstraintChecks {
@@ -469,6 +481,7 @@ export interface MenteeEvidence {
     decisionHistory: CertificateDecisionHistoryEntry[];
     overridden: boolean;
     overrideReason: string | null;
+    criteriaChecks: string[];
     verifiedAt: string | null;
     verifiedBy: string | null;
   } | null;
@@ -506,13 +519,13 @@ export const certificatesApi = {
    * Confirm or change one mentee's grade. Omit `finalTier` to accept the AI's.
    * A different tier is an override and the server requires a reason.
    */
-  verifyOne: (templateId: string, menteeId: string, body: { decision?: CertificateDecision; finalTier?: string | null; reason?: string }) =>
+  verifyOne: (templateId: string, menteeId: string, body: { decision?: CertificateDecision; finalTier?: string | null; reason?: string; criteriaChecks?: string[] }) =>
     apiClient.post<{ success: boolean; data: { verification: CertificateVerification } }>(
       `/certificates/templates/${templateId}/verifications/${menteeId}`, body
     ),
 
   /** Sign off several at once — "these all look right". */
-  verifyMany: (templateId: string, decisions: Array<{ menteeId: string; decision?: CertificateDecision; finalTier?: string | null; reason?: string }>) =>
+  verifyMany: (templateId: string, decisions: Array<{ menteeId: string; decision?: CertificateDecision; finalTier?: string | null; reason?: string; criteriaChecks?: string[] }>) =>
     apiClient.post<{ success: boolean; message: string; data: { verified: number } }>(
       `/certificates/templates/${templateId}/verifications/bulk`, { decisions }, { timeout: 120000 }
     ),

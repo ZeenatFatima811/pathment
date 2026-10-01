@@ -168,6 +168,38 @@ describe('explicit No certificate decisions', () => {
     expect(evaluation.result).toMatchObject({ decision: 'award', certificate_tier: 'silver' });
   });
 
+  it('requires direct AI evidence for every configured certificate checklist item', async () => {
+    const criteria = [{ id: 'silver', name: 'Silver', reviewChecklist: ['Completed the multi-vendor project'] }];
+    const payload = { mentee_id: mentee.id, normalized_score: 90, completion_rate: 95, on_time_rate: 90, blockers: {} };
+    const batch = [{ menteeId: mentee.id, menteePayload: payload }];
+
+    const [missing] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id, certificate_tier: 'silver'
+    }]), criteria, batch);
+    expect(missing.result).toMatchObject({ _failed: true, decision: 'undecided' });
+
+    const [proven] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id,
+      certificate_tier: 'silver',
+      criteria_checks: [{ tier_id: 'silver', item: criteria[0].reviewChecklist[0], passed: true, evidence: 'Approved multi-vendor submission and mentor feedback.' }]
+    }]), criteria, batch);
+    expect(proven.result).toMatchObject({ decision: 'award', certificate_tier: 'silver' });
+    expect(proven.result.tier_checks[0]).toMatchObject({ checklist_passed: true });
+  });
+
+  it('requires every configured mentor checklist item before sign-off', async () => {
+    const originalCriteria = template.criteria;
+    const item = 'Completed the multi-vendor project';
+    try {
+      await template.update({ criteria: [{ id: 'silver', name: 'Silver', reviewChecklist: [item] }] });
+      await expect(verification.verify(template.id, mentee.id, {}, mentor)).rejects.toThrow(/confirm every checklist item/i);
+      const saved = await verification.verify(template.id, mentee.id, { criteriaChecks: [item] }, mentor);
+      expect(saved.criteriaChecks).toEqual([item]);
+    } finally {
+      await template.update({ criteria: originalCriteria });
+    }
+  });
+
   it('does not issue an AI No certificate recommendation before a review round exists', async () => {
     await models.CertificateVerification.destroy({ where: { templateId: template.id, menteeId: mentee.id } });
     await template.update({ aiEvaluation: { results: [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null }] } });
