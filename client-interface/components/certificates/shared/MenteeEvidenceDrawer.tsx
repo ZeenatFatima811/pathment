@@ -984,14 +984,16 @@ function DecisionBlock({
       <div className="flex flex-wrap items-center gap-2">
         <CheckCircle2 className="w-4 h-4 shrink-0 text-brand-500" />
         <span className="text-sm font-semibold text-foreground">
-          Signed off as {tierName(reviewSelection(v))}
+          {v.stage === 'admin_approved' ? 'Admin approved' : 'Signed off as'} {tierName(reviewSelection(v))}
         </span>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${getTierBadgeColor(v.finalTier || '')}`}>
           {tierName(reviewSelection(v))}
         </span>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        {v.verifiedBy ? `by ${v.verifiedBy}` : 'by a mentor'}
+        {v.stage === 'admin_approved'
+          ? 'This is the finalized grade. A mentor must request an admin-approved change.'
+          : (v.verifiedBy ? `by ${v.verifiedBy}` : 'by a mentor')}
         {v.verifiedAt && ` · ${new Date(v.verifiedAt).toLocaleDateString()}`}
       </p>
       {v.overrideReason && <OverrideNote v={v} tierName={tierName} />}

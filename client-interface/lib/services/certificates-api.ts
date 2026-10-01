@@ -298,6 +298,7 @@ export interface VerificationClanStatus {
   verified: number;
   pending: number;
   overridden: number;
+  changeRequests?: number;
   noCertificate?: number;
   /** Verified by a mentor, still waiting on the admin. */
   mentorVerified?: number;

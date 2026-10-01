@@ -242,6 +242,7 @@ class CertificateVerificationService {
       const row = await models.CertificateVerification.findOne({ where: { templateId, menteeId }, transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('There is nothing to verify for this mentee');
       await this._assertCanReview(user, row);
+      const actingAsAdmin = await authzService.actsAsAdmin(user);
       const aiDecision = row.aiDecision === 'no_certificate' ? 'no_certificate' : (row.aiTier ? 'award' : 'undecided');
       const nextDecision = decision ?? (finalTier ? 'award' : aiDecision);
       if (!['award', 'no_certificate'].includes(nextDecision)) throw new ValidationError('Choose a certificate or No certificate before verifying.');
@@ -270,11 +271,11 @@ class CertificateVerificationService {
       if (reasonRequired && !explanation) {
         throw new ValidationError('A reason is required: tell us why you are changing this grade or selecting No certificate.');
       }
-      if (changed && row.stage === 'admin_approved' && !(await authzService.hasAdminAccess(user))) {
+      if (changed && row.stage === 'admin_approved' && !actingAsAdmin) {
         throw new ForbiddenError('This certificate has been approved. Request a change and an admin will decide.');
       }
       if (changed && await models.CertificateInstance.count({ where: { templateId, menteeId }, transaction })) {
-        if (!(await authzService.hasAdminAccess(user))) {
+        if (!actingAsAdmin) {
           throw new ForbiddenError('This certificate has already been sent. Request a revoke and change, and an admin will decide.');
         }
         throw new ValidationError('This certificate has already been sent. Revoke it before changing the decision.');
@@ -310,7 +311,7 @@ class CertificateVerificationService {
       // worn. An admin signing off on a MENTOR screen is doing a mentor's
       // review — the button there says "sign off", and the record must agree
       // with the button.
-      if (await authzService.actsAsAdmin(user)) {
+      if (actingAsAdmin) {
         row.stage = 'admin_approved';
       } else if (row.stage === 'admin_approved' && !changed) {
         row.stage = 'admin_approved';
@@ -392,8 +393,11 @@ class CertificateVerificationService {
       if (row.decision === 'no_certificate') bucket.noCertificate += 1;
     }
 
+    // One read for all open-thread counts and per-clan change-request badges.
+    const openThreads = await this.openThreads(templateId);
     const clans = [...byClan.values()].map((c) => ({
       ...c,
+      changeRequests: rows.filter((row) => row.clanId === c.clanId && openThreads.changeRequested.has(row.menteeId)).length,
       complete: c.pending === 0,
       // Released by the admin — this is what lets the clan's mentors send.
       approved: Boolean(c.clanId && approvedClans.has(c.clanId)),
@@ -401,9 +405,6 @@ class CertificateVerificationService {
       readyToApprove: c.pending === 0 && !(c.clanId && approvedClans.has(c.clanId))
     }));
     const deadline = template.verificationDeadline || null;
-    // One read for all three open-thread counts below.
-    const openThreads = await this.openThreads(templateId);
-
     return {
       deadline,
       overdue: Boolean(deadline && new Date(deadline) < new Date() && clans.some((c) => !c.complete)),
@@ -453,10 +454,9 @@ class CertificateVerificationService {
 
     const { approval, pending } = await sequelize.transaction(async transaction => {
       await models.CertificateTemplate.findByPk(templateId, { transaction, lock: transaction.LOCK.UPDATE });
-      const pendingRows = await models.CertificateVerification.findAll({
-        where: { templateId, clanId, status: 'pending' }, transaction
-      });
-      const pending = (await this._activeReviewRows(pendingRows, template.programId, { transaction })).length;
+      const clanRows = await models.CertificateVerification.findAll({ where: { templateId, clanId }, transaction });
+      const activeRows = await this._activeReviewRows(clanRows, template.programId, { transaction });
+      const pending = activeRows.filter((row) => row.status === 'pending').length;
 
       const [approval] = await models.CertificateClanApproval.findOrCreate({
         where: { templateId, clanId },
@@ -473,10 +473,13 @@ class CertificateVerificationService {
       // Releasing the clan is the admin's approval of what is in it. Without
       // this the roster still said "mentor verified" on rows the admin had
       // already cleared to send, which is the question they came to answer.
-      await models.CertificateVerification.update(
-        { stage: 'admin_approved' },
-        { where: { templateId, clanId, status: 'verified' }, transaction }
-      );
+      const activeIds = activeRows.map((row) => row.id);
+      if (activeIds.length) {
+        await models.CertificateVerification.update(
+          { stage: 'admin_approved', status: 'verified', verifiedBy: user.id, verifiedAt: new Date() },
+          { where: { id: { [Op.in]: activeIds } }, transaction }
+        );
+      }
       return { approval, pending };
     });
 

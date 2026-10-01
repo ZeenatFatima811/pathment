@@ -673,22 +673,22 @@ class CertificateService {
     }
 
     const scopedMenteeIds = mentees.map(m => m.id);
-    const [issuedRows, reviewedRows] = await Promise.all([
+    const [issuedRows, verificationRows, approvedClanRows] = await Promise.all([
       models.CertificateInstance.findAll({
         where: { templateId: id, menteeId: { [Op.in]: scopedMenteeIds } },
         attributes: ['menteeId'], raw: true
       }),
       models.CertificateVerification.findAll({
-        where: {
-          templateId: id,
-          menteeId: { [Op.in]: scopedMenteeIds },
-          [Op.or]: [{ status: 'verified' }, { stage: 'admin_approved' }]
-        },
-        attributes: ['menteeId'], raw: true
-      })
+        where: { templateId: id, menteeId: { [Op.in]: scopedMenteeIds } },
+        attributes: ['menteeId', 'clanId', 'status', 'stage'], raw: true
+      }),
+      models.CertificateClanApproval.findAll({ where: { templateId: id }, attributes: ['clanId'], raw: true })
     ]);
     const issuedIds = new Set(issuedRows.map((row) => row.menteeId));
-    const reviewedIds = new Set(reviewedRows.map((row) => row.menteeId));
+    const approvedClanIds = new Set(approvedClanRows.map((row) => row.clanId));
+    const reviewedIds = new Set(verificationRows
+      .filter((row) => row.status === 'verified' || row.stage === 'admin_approved' || approvedClanIds.has(row.clanId))
+      .map((row) => row.menteeId));
     const menteeIds = scopedMenteeIds.filter((menteeId) => !issuedIds.has(menteeId) && !reviewedIds.has(menteeId));
     const skipped = {
       issued: issuedIds.size,

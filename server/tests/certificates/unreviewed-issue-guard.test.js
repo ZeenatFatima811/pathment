@@ -218,11 +218,14 @@ describe('an unreviewed grade cannot be issued', () => {
       // Releasing the clan IS the admin approving what is in it, which is the
       // question "what have I approved?" the roster has to answer.
       expect(row.stage).toBe('admin_approved');
-      // An unreviewed row is not swept along by the release.
+      // Approve early explicitly finalizes the current AI decision too. It is
+      // recorded by approvedBeforeVerified and cannot later be overwritten by
+      // a mentor proof claim.
       const still = await models.CertificateVerification.findOne({
         where: { templateId: template.id, menteeId: unreviewed.id }
       });
-      expect(still.stage).toBe('awaiting_mentor');
+      expect(still.stage).toBe('admin_approved');
+      expect(still.status).toBe('verified');
     });
 
     it('does not let a mentor un-approve what an admin already approved', async () => {
@@ -238,15 +241,15 @@ describe('an unreviewed grade cannot be issued', () => {
         where: { templateId: template.id, menteeId: unreviewed.id } })).stage).toBe('admin_approved');
     });
 
-    it('does drop back to mentor_verified when the mentor changes the grade', async () => {
+    it('skips a direct mentor grade change after admin approval', async () => {
       await verification.verify(template.id, unreviewed.id, {}, admin);
-      // The admin approved the old grade, not this one, so the approval lapses.
-      await verification.verify(template.id, unreviewed.id,
-        { decision: 'no_certificate', reason: 'Did not complete the work' }, lead);
+      // The mentor must use the audited change-request flow instead.
+      await expect(verification.verify(template.id, unreviewed.id,
+        { decision: 'no_certificate', reason: 'Did not complete the work' }, lead)).rejects.toThrow(/request a change/i);
       const row = await models.CertificateVerification.findOne({
         where: { templateId: template.id, menteeId: unreviewed.id } });
-      expect(row.stage).toBe('mentor_verified');
-      expect(row.decision).toBe('no_certificate');
+      expect(row.stage).toBe('admin_approved');
+      expect(row.decision).toBe('award');
     });
 
     it('reports the split in the summary', async () => {

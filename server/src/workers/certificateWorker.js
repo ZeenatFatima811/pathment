@@ -124,14 +124,21 @@ async function processBatchJobs(batchJobs) {
     // again immediately before the model call so the worker can never overwrite
     // a human-reviewed, approved, or issued certificate due to a race.
     const menteeIds = batchJobs.map((job) => job.menteeId);
-    const [issuedRows, reviewedRows] = await Promise.all([
+    const [issuedRows, verificationRows, approvedClanRows] = await Promise.all([
       models.CertificateInstance.findAll({ where: { templateId, menteeId: { [Op.in]: menteeIds } }, attributes: ['menteeId'], raw: true }),
       models.CertificateVerification.findAll({
-        where: { templateId, menteeId: { [Op.in]: menteeIds }, [Op.or]: [{ status: 'verified' }, { stage: 'admin_approved' }] },
-        attributes: ['menteeId'], raw: true
-      })
+        where: { templateId, menteeId: { [Op.in]: menteeIds } },
+        attributes: ['menteeId', 'clanId', 'status', 'stage'], raw: true
+      }),
+      models.CertificateClanApproval.findAll({ where: { templateId }, attributes: ['clanId'], raw: true })
     ]);
-    const finalizedIds = new Set([...issuedRows, ...reviewedRows].map((row) => row.menteeId));
+    const approvedClanIds = new Set(approvedClanRows.map((row) => row.clanId));
+    const finalizedIds = new Set([
+      ...issuedRows.map((row) => row.menteeId),
+      ...verificationRows
+        .filter((row) => row.status === 'verified' || row.stage === 'admin_approved' || approvedClanIds.has(row.clanId))
+        .map((row) => row.menteeId)
+    ]);
     for (const job of batchJobs) {
       if (!finalizedIds.has(job.menteeId)) continue;
       job.status = 'completed';
