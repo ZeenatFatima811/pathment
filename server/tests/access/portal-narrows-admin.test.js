@@ -21,6 +21,7 @@ const { models } = require('../../src/db');
 const clanService = require('../../src/services/clanService');
 const authzService = require('../../src/services/authzService');
 const certificateService = require('../../src/services/certificateService');
+const mentorshipPauseService = require('../../src/services/mentorshipPauseService');
 const { runWithRequestContext } = require('../../src/utils/auditContext');
 const { cleanDb, createAdmin, createMentee, createProgram } = require('../helpers/seed');
 
@@ -90,6 +91,19 @@ describe('a user who is both an admin and a mentor', () => {
       const scope = await inPortal('mentor', () => certificateService.resolveMenteeScope(person, { programId: program.id }));
       expect(scope).toEqual([myMentee.id]);
       expect(scope).not.toContain(theirMentee.id);
+    });
+
+    it('limits paused mentees to their own clans in the mentor portal', async () => {
+      await models.ClanMembership.update(
+        { status: 'paused', pausedAt: new Date() },
+        { where: { userId: [myMentee.id, theirMentee.id], role: 'mentee' } }
+      );
+
+      const asAdmin = await inPortal('admin', () => mentorshipPauseService.listPaused(person));
+      expect(asAdmin.map((row) => row.menteeId).sort()).toEqual([myMentee.id, theirMentee.id].sort());
+
+      const asMentor = await inPortal('mentor', () => mentorshipPauseService.listPaused(person));
+      expect(asMentor.map((row) => row.menteeId)).toEqual([myMentee.id]);
     });
   });
 

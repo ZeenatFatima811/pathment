@@ -22,12 +22,14 @@ class MentorshipPauseService {
   _name(u) { return u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Mentee' : 'Mentee'; }
 
   async _isAdmin(user) {
-    return !!user?.id && authzService.can(user, require('../config/permissions').PERMISSIONS.MENTEE_MANAGE, { orgWide: true });
+    // Portal-aware on purpose: a multi-role admin working in /mentor must see
+    // only the clans they mentor. In /admin the same account remains org-wide.
+    return !!user?.id && authzService.actsAsAdmin(user);
   }
 
   /**
-   * The clans this requester acts within: an ADMIN sees every clan (org-wide
-   * oversight); a mentor sees only the clans they run. Accepts a user object
+   * The clans this requester acts within: an admin in the admin portal sees
+   * every clan; the mentor portal sees only clans they run. Accepts a user object
    * (preferred) or a bare mentorId string. Returns { clanIds, clanNameById }.
    */
   async _scopeClans(user) {
