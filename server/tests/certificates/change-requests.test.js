@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * A mentor edits freely until an admin approves — and not after.
+ * A mentor edits freely until an admin sends the certificate — and not after.
  *
  * Before approval a mentor's sign-off is their own working decision and they
- * should be able to correct it without ceremony. After approval it is the
+ * should be able to correct it without ceremony. After issuance it is the
  * admin's call. But "you cannot change this" with no way forward is a dead end:
  * the mentor knows the mentee and is exactly who spots a mistake afterwards. So
  * they request, with a reason, and the admin decides in one press.
@@ -59,6 +59,14 @@ describe('changing a grade after approval', () => {
   const rowFor = (m) => models.CertificateVerification.findOne({
     where: { templateId: template.id, menteeId: m.id }
   });
+  const issueFor = (m, tier = 'bronze') => models.CertificateInstance.create({
+    organizationId: template.organizationId,
+    templateId: template.id,
+    menteeId: m.id,
+    issuedBy: admin.id,
+    tier,
+    certificateNumber: `TEST-${m.id.slice(0, 8)}-${Date.now()}`
+  });
   const dispatchesTo = (userId) => notificationOrchestrator.dispatch.mock.calls
     .map(([args]) => args)
     .filter((args) => (args.recipients || []).some((r) => r.userId === userId));
@@ -76,31 +84,56 @@ describe('changing a grade after approval', () => {
       await verification.verify(template.id, mentee.id, {}, lead);
       await expect(verification.requestChange(template.id, mentee.id,
         { finalTier: 'silver', reason: 'Deserves more' }, lead))
-        .rejects.toThrow(/not approved yet/i);
+        .rejects.toThrow(/not been approved yet/i);
     });
   });
 
-  describe('once an admin has approved', () => {
+  describe('once an admin approves, before an instance is issued', () => {
+    beforeEach(async () => {
+      await verification.verify(template.id, mentee.id, {}, lead);
+      await verification.verify(template.id, mentee.id, {}, admin);
+    });
+
+    it('requires the mentor to request the change', async () => {
+      await expect(verification.verify(template.id, mentee.id,
+        { finalTier: 'silver', reason: 'Deserves more' }, lead))
+        .rejects.toThrow(/Request a change/i);
+      await expect(verification.requestChange(template.id, mentee.id,
+        { finalTier: 'silver', reason: 'Deserves more' }, lead))
+        .resolves.toMatchObject({ kind: 'change_request', requestedTier: 'silver' });
+    });
+
+    it('lets the admin approve the request without requiring an issued instance', async () => {
+      const request = await verification.requestChange(template.id, mentee.id,
+        { finalTier: 'silver', reason: 'Deserves more' }, lead);
+      await expect(verification.resolveChangeRequest(request.id, { approve: true }, admin))
+        .resolves.toMatchObject({ resolution: 'approved' });
+      expect(await models.CertificateInstance.count({ where: { templateId: template.id, menteeId: mentee.id } })).toBe(0);
+      expect(await rowFor(mentee)).toMatchObject({ finalTier: 'silver', stage: 'admin_approved' });
+    });
+  });
+
+  describe('once an admin has sent the certificate', () => {
     beforeEach(async () => {
       await verification.verify(template.id, mentee.id, {}, lead);
       await verification.verify(template.id, mentee.id, {}, admin); // admin_approved
+      await issueFor(mentee);
       notificationOrchestrator.dispatch.mockClear();
     });
 
     it('locks the mentor out, and says what to do instead', async () => {
       await expect(verification.verify(template.id, mentee.id,
         { finalTier: 'silver', reason: 'Deserves more' }, lead))
-        .rejects.toThrow(/Request a change/i);
+        .rejects.toThrow(/Request a revoke and change/i);
       expect((await rowFor(mentee)).finalTier).toBe('bronze');
     });
 
-    it('still lets the admin change it directly', async () => {
-      const changed = await verification.verify(template.id, mentee.id,
-        { finalTier: 'silver', reason: 'On reflection' }, admin);
-      expect(changed.finalTier).toBe('silver');
+    it('requires the admin to revoke before changing it directly', async () => {
+      await expect(verification.verify(template.id, mentee.id,
+        { finalTier: 'silver', reason: 'On reflection' }, admin)).rejects.toThrow(/Revoke it/i);
     });
 
-    it('locks a mentor when the CLAN was approved rather than the row', async () => {
+    it('locks a mentor as soon as the clan is approved', async () => {
       await verification.verify(template.id, other.id, {}, lead);
       await verification.approveClan(template.id, clan.id, {}, admin);
       await expect(verification.verify(template.id, other.id,
@@ -221,6 +254,7 @@ describe('changing a grade after approval', () => {
     it('flags a change request separately from an admin question', async () => {
       await verification.verify(template.id, mentee.id, {}, lead);
       await verification.verify(template.id, mentee.id, {}, admin);
+      await issueFor(mentee);
       await verification.requestChange(template.id, mentee.id, { finalTier: 'silver', reason: 'Deserves more' }, lead);
 
       await verification.verify(template.id, other.id, {}, lead);
@@ -240,6 +274,7 @@ describe('changing a grade after approval', () => {
       await verification.verify(template.id, mentee.id, {}, lead);
       await verification.askMentor(template.id, mentee.id, 'Why bronze?', admin);
       await verification.verify(template.id, mentee.id, {}, admin);
+      await issueFor(mentee);
       await expect(verification.requestChange(template.id, mentee.id,
         { finalTier: 'silver', reason: 'Deserves more' }, lead)).resolves.toMatchObject({ status: 'open' });
     });

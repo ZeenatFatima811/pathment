@@ -54,7 +54,7 @@ export function VerificationBanner({
     if (!verified) {
       const ok = await confirm({
         title: 'Approve before the review is finished?',
-        description: 'This clan\'s mentors have not signed off every grade yet. Approving now locks mentor edits and lets them send certificates as they stand. Only admins can change approved decisions.',
+        description: 'This clan\'s mentors have not signed off every grade yet. Approving now finalizes the current decisions and locks direct mentor edits. Future corrections require an admin-approved change request.',
         confirmLabel: 'Approve anyway',
       });
       if (!ok) return;
@@ -155,7 +155,7 @@ export function VerificationBanner({
                   : counts.ready > 0
                     ? `${counts.ready} clan${counts.ready === 1 ? ' is' : 's are'} ready for your approval.`
                     : `${counts.blocked} clan${counts.blocked === 1 ? ' is' : 's are'} still waiting on mentor sign-off.`}
-                {' '}Approval locks mentor edits.
+                {' '}Approval locks direct mentor edits.
               </p>
             </div>
           </div>

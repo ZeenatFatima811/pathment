@@ -1471,6 +1471,7 @@ class CertificateService {
     if (!templateId) {
       throw new ValidationError('Template ID is required');
     }
+    if (!user) throw new ForbiddenError('You must be signed in to send certificates');
 
     const t = await sequelize.transaction();
     try {
@@ -1814,6 +1815,9 @@ class CertificateService {
   }
 
   async deleteCertificateInstance(id, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can revoke an issued certificate');
+    }
     const instance = await models.CertificateInstance.findOne({ where: { id } });
     if (!instance) throw new NotFoundError('Certificate instance not found');
 
@@ -1821,7 +1825,23 @@ class CertificateService {
       user, instance.menteeId, 'You can only revoke certificates for mentees in your clan'
     );
 
-    await instance.destroy();
+    await sequelize.transaction(async transaction => {
+      await models.AuditLog.create({
+        organizationId: instance.organizationId,
+        userId: user.id,
+        action: 'certificate.revoked',
+        entityType: 'CertificateInstance',
+        entityId: instance.id,
+        oldValues: {
+          templateId: instance.templateId,
+          menteeId: instance.menteeId,
+          tier: instance.tier,
+          certificateNumber: instance.certificateNumber,
+          issuedAt: instance.createdAt
+        }
+      }, { transaction });
+      await instance.destroy({ transaction });
+    });
     return true;
   }
 
@@ -1845,6 +1865,9 @@ class CertificateService {
   }
 
   async revokeAllTemplateCertificates(id, user) {
+    if (!(await authzService.hasAdminAccess(user))) {
+      throw new ForbiddenError('Only an admin can revoke issued certificates');
+    }
     const template = await models.CertificateTemplate.findOne({ where: { id } });
     if (!template) throw new NotFoundError('Certificate template not found');
 

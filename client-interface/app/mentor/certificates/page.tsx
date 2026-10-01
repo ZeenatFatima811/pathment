@@ -154,11 +154,7 @@ export default function MentorCertificatesPage() {
     isOpen: boolean;
     duplicates: Array<{ id: string; name: string; email: string; tier: string }>;
     allSelectedRecipients: Array<{ menteeId: string; tier: string }>;
-  }>({
-    isOpen: false,
-    duplicates: [],
-    allSelectedRecipients: []
-  });
+  }>({ isOpen: false, duplicates: [], allSelectedRecipients: [] });
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -603,11 +599,11 @@ export default function MentorCertificatesPage() {
   };
 
   const isApprovedRecipient = (id: string) => {
-    const clanId = reviewRows?.[id]?.clanId || activeMentees.find(m => m.id === id)?.clanId;
-    return Boolean(clanId && (release ?? []).some(c => c.clanId === clanId && c.approved));
+    const recipient = activeMentees.find(m => m.id === id);
+    return reviewStage(reviewRows?.[id] ?? {}).stage === 'admin_approved' || Boolean(recipient?.issuedTiers?.length);
   };
   const handleTierChange = (menteeId: string, value: string) => {
-    if (isApprovedRecipient(menteeId)) { toast.error('Admin approved — only an admin can change this decision.'); return; }
+    if (isApprovedRecipient(menteeId)) { toast.error('This certificate was approved. Open its details to request a change.'); return; }
     setMentorTiers(prev => ({ ...prev, [menteeId]: value }));
 
     const mentee = activeMentees.find(m => m.id === menteeId);
@@ -725,34 +721,21 @@ export default function MentorCertificatesPage() {
     try {
       setIssuing(true);
       const res = await certificatesApi.issueCertificates({
-        templateId: activeTemplateId!,
-        recipients: recipientsList,
-        mentorId: user?.id
+        templateId: activeTemplateId!, recipients: recipientsList, mentorId: user?.id
       });
       if (res.success) {
-        // Report what the server actually did. Some of the selection may
-        // already hold this certificate — those are skipped, not sent — and
-        // claiming "queued 20" when 18 were duplicates is a lie the mentor
-        // only discovers by counting.
         const issued = res.data?.count ?? recipientsList.length;
         const skipped = res.data?.skipped ?? 0;
         const excluded = res.data?.skippedNoCertificate ?? 0;
-        if (issued === 0 && !excluded) {
-          toast.info(`Everyone selected already has this certificate.`);
-        } else {
-          toast.success(
-            skipped > 0
-              ? `Sent ${issued} certificate(s) — ${excluded} no certificate, ${skipped - excluded} already issued`
-              : `Sent ${issued} certificate(s)`
-          );
-        }
+        if (issued === 0 && !excluded) toast.info('Everyone selected already has this certificate.');
+        else toast.success(skipped > 0
+          ? `Sent ${issued} certificate(s) — ${excluded} no certificate, ${skipped - excluded} already issued`
+          : `Sent ${issued} certificate(s)`);
         setSelectedIds(new Set());
         setRefreshKey(prev => prev + 1);
         loadReview();
       }
     } catch (err) {
-      // The server's own words matter here: a refusal explains that the clan
-      // has not been approved yet, which a generic message would throw away.
       toast.error(extractApiErrorMessage(err, 'Failed to issue certificates'));
     } finally {
       setIssuing(false);
@@ -764,47 +747,32 @@ export default function MentorCertificatesPage() {
       toast.error('Select at least one mentee');
       return;
     }
-
-    const recipients = Array.from(selectedIds).map(id => ({
-      menteeId: id,
-      tier: getEffectiveTier(id)
-    }));
-
+    const recipients = Array.from(selectedIds).map(id => ({ menteeId: id, tier: getEffectiveTier(id) }));
     if (recipients.some(recipient => !recipient.tier)) {
       toast.error('Choose a certificate for every selected mentee before issuing.');
       return;
     }
-
     if (recipients.some(r => r.tier === NO_CERTIFICATE && reviewRows?.[r.menteeId]?.decision !== 'no_certificate')) {
       toast.error('Verify your No certificate decisions before issuing.');
       return;
     }
     const excludedCount = recipients.filter(r => reviewRows?.[r.menteeId]?.decision === 'no_certificate').length;
-    if (excludedCount && !(await confirm({ title: 'Exclude recipients with no certificate?', description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.` }))) return;
-    const duplicateInstances = recipients.filter(r => {
-      const m = activeMentees.find(item => item.id === r.menteeId);
-      return m && m.issuedTiers && m.issuedTiers.includes(r.tier);
+    if (excludedCount && !(await confirm({
+      title: 'Exclude recipients with no certificate?',
+      description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.`
+    }))) return;
+
+    const duplicates = recipients.filter(r => {
+      const mentee = activeMentees.find(item => item.id === r.menteeId);
+      return mentee?.issuedTiers?.includes(r.tier);
     }).map(r => {
-      const m = activeMentees.find(item => item.id === r.menteeId);
-      return {
-        id: r.menteeId,
-        name: m ? `${m.firstName} ${m.lastName}` : 'Recipient',
-        email: m?.email ?? '',
-        tier: getTierName(r.tier)
-      };
+      const mentee = activeMentees.find(item => item.id === r.menteeId);
+      return { id: r.menteeId, name: mentee ? `${mentee.firstName} ${mentee.lastName}` : 'Recipient', email: mentee?.email ?? '', tier: getTierName(r.tier) };
     });
 
-    if (duplicateInstances.length > 0) {
-      setDuplicateWarnState({
-        isOpen: true,
-        duplicates: duplicateInstances,
-        allSelectedRecipients: recipients
-      });
-    } else {
-      await executeIssuance(recipients);
-    }
+    if (duplicates.length) setDuplicateWarnState({ isOpen: true, duplicates, allSelectedRecipients: recipients });
+    else await executeIssuance(recipients);
   };
-
 
   if (!activeTemplateId) {
     return (
@@ -1363,17 +1331,14 @@ export default function MentorCertificatesPage() {
                         : `Verify ${pendingDecisions.length} grade${pendingDecisions.length === 1 ? '' : 's'}`}
                     </button>
                   ) : canIssue ? (
-                    /* Sending is unlocked by the admin approving the clan, after
-                       its grades are verified. Showing the button regardless
-                       just produced a 403 — the mentor pressed it and got an
-                       error rather than an explanation. */
                     <button
+                      type="button"
                       onClick={handleIssue}
                       disabled={issuing || selectedIds.size === 0 || selectedSummary.counts[NO_CERTIFICATE] === selectedIds.size}
                       className="flex items-center gap-1.5 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed rounded-xl text-sm font-medium transition-all shadow-sm"
                     >
                       {issuing ? <Loader2 className="animate-spin w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                      Issue Certificates
+                      Send Certificates
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3.5 py-2.5">
@@ -1381,7 +1346,7 @@ export default function MentorCertificatesPage() {
                       <span className="text-[11px] font-semibold text-foreground">
                         {pendingReviewCount > 0
                           ? `${pendingReviewCount} grade${pendingReviewCount === 1 ? '' : 's'} still need your sign-off.`
-                          : 'Signed off — waiting for an admin to approve your clan.'}
+                          : 'Signed off — waiting for an admin to approve.'}
                       </span>
                     </div>
                   )}
@@ -1552,21 +1517,19 @@ export default function MentorCertificatesPage() {
         duplicates={duplicateWarnState.duplicates}
         onCancel={() => setDuplicateWarnState(prev => ({ ...prev, isOpen: false }))}
         onIssueAnyway={async () => {
-          const allSelected = duplicateWarnState.allSelectedRecipients;
+          const recipients = duplicateWarnState.allSelectedRecipients;
           setDuplicateWarnState(prev => ({ ...prev, isOpen: false }));
-          await executeIssuance(allSelected);
+          await executeIssuance(recipients);
         }}
         onSkipDuplicates={async () => {
-          const dupIds = new Set(duplicateWarnState.duplicates.map(d => d.id));
-          const cleanRecipients = duplicateWarnState.allSelectedRecipients.filter(r => !dupIds.has(r.menteeId));
+          const duplicateIds = new Set(duplicateWarnState.duplicates.map(item => item.id));
+          const recipients = duplicateWarnState.allSelectedRecipients.filter(item => !duplicateIds.has(item.menteeId));
           setDuplicateWarnState(prev => ({ ...prev, isOpen: false }));
-          if (cleanRecipients.length === 0) {
-            toast.info('No remaining recipients left after skipping duplicates.');
-            return;
-          }
-          await executeIssuance(cleanRecipients);
+          if (!recipients.length) toast.info('No remaining recipients left after skipping duplicates.');
+          else await executeIssuance(recipients);
         }}
       />
+
     </div>
   );
 }

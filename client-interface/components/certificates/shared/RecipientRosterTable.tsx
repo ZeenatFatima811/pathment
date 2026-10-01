@@ -235,7 +235,7 @@ export function RecipientRosterTable({
                     ? <Lock className="absolute right-2.5 w-3 h-3 pointer-events-none text-muted-foreground/60" />
                     : <ChevronDown className="absolute right-2.5 w-3 h-3 pointer-events-none text-muted-foreground/60" />}
                 </div>
-                {isRecipientLocked?.(m.id) && <span className="mt-1 text-[10px] text-brand-700">Admin approved · editing locked</span>}
+                {isRecipientLocked?.(m.id) && <span className="mt-1 text-[10px] text-brand-700">Admin approved · request a change</span>}
                 <ReviewNote
                   review={reviewRows?.[m.id]}
                   aiTier={aiSelection(recommendation) || null}

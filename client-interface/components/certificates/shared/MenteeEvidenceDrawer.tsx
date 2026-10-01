@@ -175,7 +175,7 @@ export function MenteeEvidenceDrawer({
 
   const v = evidence?.verification ?? null;
 
-  const openQuestion = questions.find(q => q.status === 'open') ?? null;
+  const openQuestion = questions.find(q => q.kind === 'question' && q.status === 'open') ?? null;
   /**
    * A question is only meaningful against a MENTOR's decision — there is
    * nothing to ask when an admin graded it themselves, or when nobody has
@@ -188,12 +188,8 @@ export function MenteeEvidenceDrawer({
   const canAsk = actingAsAdmin && decidedByMentor && !openQuestion;
   const canAnswer = Boolean(openQuestion) && !actingAsAdmin;
 
-  /**
-   * An approved grade is the admin's call, so the mentor asks instead of
-   * editing. Swapping the form rather than letting them fill it in and be
-   * refused is the whole difference between a lock and a dead end.
-   */
-  const lockedForMentor = Boolean(!actingAsAdmin && v?.stage === 'admin_approved');
+  /** Admin approval (or an already-issued instance) locks direct mentor edits. */
+  const lockedForMentor = Boolean(!actingAsAdmin && (v?.stage === 'admin_approved' || evidence?.issued));
   const openChangeRequest = questions.find(q => q.kind === 'change_request' && q.status === 'open') ?? null;
 
   const ask = async () => {
@@ -629,7 +625,7 @@ export function MenteeEvidenceDrawer({
                         className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground"
                       >
                         {questionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                        Approve &amp; apply
+                        Approve, revoke &amp; apply
                       </button>
                       <button
                         type="button"
@@ -719,7 +715,7 @@ export function MenteeEvidenceDrawer({
                   className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:border-brand-500/40 disabled:opacity-50"
                 >
                   {notifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
-                  Notify this mentee's mentor
+                  Notify this mentee&apos;s mentor
                 </button>
                 <span className="text-[11px] text-muted-foreground">
                   {/* The round-wide reminder mails every unfinished clan; this
@@ -730,14 +726,14 @@ export function MenteeEvidenceDrawer({
             </section>
           )}
 
-          {/* ── Approved: the mentor asks instead of editing ────────────── */}
+          {/* ── Approved/sent: the mentor asks the admin to change ────── */}
           {canDecide && lockedForMentor && (
             <section className="space-y-2.5">
-              <SectionLabel>Approved — request a change</SectionLabel>
+              <SectionLabel>Certificate approved — request a change</SectionLabel>
               <div className="space-y-3 rounded-2xl border border-border bg-muted/20 p-4">
                 <p className="text-[11px] text-muted-foreground">
-                  An admin has approved this grade, so it is no longer yours to edit.
-                  Say what it should be and why, and an admin will decide.
+                  This certificate has been approved and can no longer be edited directly.
+                  Choose the requested grade and explain why. An admin will decide; if already sent, the existing certificate will be revoked.
                 </p>
                 {openChangeRequest ? (
                   <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs font-medium text-foreground">
@@ -767,7 +763,7 @@ export function MenteeEvidenceDrawer({
                       className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
                     >
                       {questionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircleQuestion className="h-4 w-4" />}
-                      Request this change
+                      Request change
                     </button>
                   </>
                 )}

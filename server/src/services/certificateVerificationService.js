@@ -242,32 +242,6 @@ class CertificateVerificationService {
       const row = await models.CertificateVerification.findOne({ where: { templateId, menteeId }, transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('There is nothing to verify for this mentee');
       await this._assertCanReview(user, row);
-      /**
-       * A mentor edits freely until an admin approves, and not after.
-       *
-       * Before approval their sign-off is their own working decision and they
-       * should be able to correct it without ceremony. Once an admin has
-       * approved it, it is the admin's call and the mentor asks instead —
-       * `requestChange` is the way forward, so the refusal names it rather than
-       * leaving them at a dead end.
-       *
-       * The stage check is free and covers the common case: `approveClan`
-       * stamps every verified row it releases to `admin_approved`, so the
-       * approval-table query below only runs for rows that joined the clan
-       * after it was released.
-       */
-      if (!(await authzService.hasAdminAccess(user))) {
-        const lockedByAdmin = row.stage === 'admin_approved';
-        const lockedByClan = !lockedByAdmin && row.clanId && await models.CertificateClanApproval.findOne({
-          where: { templateId, clanId: row.clanId }, transaction, attributes: ['id']
-        });
-        if (lockedByAdmin || lockedByClan) {
-          throw new ForbiddenError(
-            'An admin has approved this grade, so it can no longer be edited directly. Request a change and an admin will decide.'
-          );
-        }
-      }
-
       const aiDecision = row.aiDecision === 'no_certificate' ? 'no_certificate' : (row.aiTier ? 'award' : 'undecided');
       const nextDecision = decision ?? (finalTier ? 'award' : aiDecision);
       if (!['award', 'no_certificate'].includes(nextDecision)) throw new ValidationError('Choose a certificate or No certificate before verifying.');
@@ -282,8 +256,14 @@ class CertificateVerificationService {
       if (reasonRequired && !explanation) {
         throw new ValidationError('A reason is required: tell us why you are changing this grade or selecting No certificate.');
       }
+      if (changed && row.stage === 'admin_approved' && !(await authzService.hasAdminAccess(user))) {
+        throw new ForbiddenError('This certificate has been approved. Request a change and an admin will decide.');
+      }
       if (changed && await models.CertificateInstance.count({ where: { templateId, menteeId }, transaction })) {
-        throw new ValidationError('This certificate has already been issued. Revoke it before changing the decision.');
+        if (!(await authzService.hasAdminAccess(user))) {
+          throw new ForbiddenError('This certificate has already been sent. Request a revoke and change, and an admin will decide.');
+        }
+        throw new ValidationError('This certificate has already been sent. Revoke it before changing the decision.');
       }
       const decisionReason = reasonRequired ? explanation : null;
       const needsApproval = changed || row.status !== 'verified' || row.overrideReason !== decisionReason;
@@ -695,7 +675,7 @@ class CertificateVerificationService {
     return [...new Set([...unreviewed, ...unapproved])];
   }
 
-  /** Tell a clan's mentors their certificates are cleared to send. */
+  /** Tell a clan's mentors that their reviewed grades are approved to send. */
   async _notifyClanApproved(templateId, clanId) {
     const mentors = await models.ClanMembership.findAll({
       where: {
@@ -718,8 +698,8 @@ class CertificateVerificationService {
         eventKey: NOTIFICATION_EVENTS.CERTIFICATE_CLAN_APPROVED,
         recipients: [...new Set(mentors.map((m) => m.userId))].map((userId) => ({ userId })),
         payload: {
-          title: 'Certificates approved for your clan',
-          message: `"${template?.name}" is approved for ${clan?.name || 'your clan'}. You can send the certificates to your mentees now.`,
+          title: 'Grades approved for your clan',
+          message: `"${template?.name}" is approved for ${clan?.name || 'your clan'}. You can now send the certificates to your mentees.`,
           actionUrl: '/mentor/certificates',
           actionLabel: 'Send certificates',
           relatedEntityType: 'CertificateTemplate'
@@ -1179,15 +1159,14 @@ class CertificateVerificationService {
   }
 
   /**
-   * The mentor's way forward once a grade is locked.
+   * The mentor's way forward once a certificate has been approved or sent.
    *
-   * They may not edit an approved grade, but they are the person who knows the
+   * They may not edit an issued credential, but they are the person who knows the
    * mentee and the one most likely to spot a mistake afterwards. So they say
    * what they want it changed to and why, and the admin decides in one press.
    *
-   * Only for a LOCKED grade. While the row is merely `mentor_verified` the
-   * mentor can still just change it, and routing that through an approval queue
-   * would be ceremony for nothing.
+   * Admin approval is the finalization boundary. An issued instance may also
+   * exist; when it does, approval of the request revokes it before changing.
    */
   async requestChange(templateId, menteeId, { finalTier, decision, reason } = {}, user) {
     const text = String(reason || '').trim();
@@ -1206,12 +1185,11 @@ class CertificateVerificationService {
       throw new ValidationError('You can change this grade directly — there is nobody to ask.');
     }
 
-    const lockedByAdmin = row.stage === 'admin_approved';
-    const lockedByClan = !lockedByAdmin && row.clanId && await models.CertificateClanApproval.findOne({
-      where: { templateId, clanId: row.clanId }, attributes: ['id']
+    const issued = await models.CertificateInstance.findOne({
+      where: { templateId, menteeId }, attributes: ['id', 'tier', 'certificateNumber', 'createdAt']
     });
-    if (!lockedByAdmin && !lockedByClan) {
-      throw new ValidationError('This grade is not approved yet — change it directly instead.');
+    if (row.stage !== 'admin_approved' && !issued) {
+      throw new ValidationError('This certificate has not been approved yet — change the grade directly instead.');
     }
 
     const nextDecision = decision || (finalTier ? 'award' : null);
@@ -1243,8 +1221,8 @@ class CertificateVerificationService {
     });
 
     await this._tellAdmins(template, {
-      title: 'A mentor asked to change an approved grade',
-      message: `${await this._menteeName(menteeId)}: ${this._tierLabel(template, row.finalTier, row.decision)} → ${this._tierLabel(template, tier, nextDecision)}. "${text}"`,
+      title: 'A mentor requested a certificate change',
+      message: `${await this._menteeName(menteeId)} asked to ${issued ? 'revoke the issued certificate and ' : ''}change ${this._tierLabel(template, row.finalTier, row.decision)} → ${this._tierLabel(template, tier, nextDecision)}. "${text}"`,
       actionUrl: `/admin/certificates/${templateId}/edit?mentee=${menteeId}`,
       actionLabel: 'Review the request'
     });
@@ -1253,9 +1231,8 @@ class CertificateVerificationService {
   }
 
   /**
-   * The admin's answer to a change request. Approving APPLIES the change, as
-   * the admin's own decision — so the row ends up `admin_approved` with the
-   * admin on it, which is exactly what happened.
+   * Approving applies the requested grade in one transaction. If an issued
+   * credential exists it is revoked first; replacement issuance stays explicit.
    */
   async resolveChangeRequest(questionId, { approve, note = null } = {}, user) {
     if (!(await authzService.hasAdminAccess(user))) {
@@ -1269,23 +1246,48 @@ class CertificateVerificationService {
     const text = String(note || '').trim();
     if (!approve && !text) throw new ValidationError('Give a reason when declining a change request');
 
-    if (approve) {
-      // Applied through `verify` so every rule still holds — the tier must
-      // exist, an issued certificate still blocks a change, and the decision
-      // history records the admin as the one who made it.
-      await this.verify(request.templateId, request.menteeId, {
-        decision: request.requestedDecision,
-        finalTier: request.requestedTier,
-        reason: text || `Approved a change requested by a mentor: ${request.question}`
-      }, user, { notify: false });
-    }
+    await sequelize.transaction(async transaction => {
+      if (approve) {
+        const issued = await models.CertificateInstance.findAll({
+          where: { templateId: request.templateId, menteeId: request.menteeId },
+          transaction, lock: transaction.LOCK.UPDATE
+        });
+        await models.AuditLog.create({
+          organizationId: request.organizationId,
+          userId: user.id,
+          action: 'certificate.revocation_request_approved',
+          entityType: 'CertificateVerification',
+          entityId: request.menteeId,
+          oldValues: {
+            requestId: request.id,
+            reason: request.question,
+            certificates: issued.map(instance => ({
+              id: instance.id, tier: instance.tier,
+              certificateNumber: instance.certificateNumber, issuedAt: instance.createdAt
+            }))
+          },
+          newValues: { decision: request.requestedDecision, tier: request.requestedTier }
+        }, { transaction });
 
-    request.status = 'answered';
-    request.resolution = approve ? 'approved' : 'declined';
-    request.answer = text || (approve ? 'Approved.' : null);
-    request.answeredBy = user.id;
-    request.answeredAt = new Date();
-    await request.save();
+        if (issued.length) {
+          await models.CertificateInstance.destroy({
+            where: { id: { [Op.in]: issued.map(instance => instance.id) } }, transaction
+          });
+        }
+        await this.verify(request.templateId, request.menteeId, {
+          decision: request.requestedDecision,
+          finalTier: request.requestedTier,
+          reason: text || `Approved revoke-and-change request: ${request.question}`
+        }, user, { notify: false, transaction });
+      }
+
+      request.status = 'answered';
+      request.resolution = approve ? 'approved' : 'declined';
+      request.answer = text || (approve ? 'Change approved. Ready to send.' : null);
+      request.answeredBy = user.id;
+      request.answeredAt = new Date();
+      await request.save({ transaction });
+    });
 
     const template = await models.CertificateTemplate.findByPk(request.templateId, { attributes: ['id', 'name', 'criteria'] });
     try {
@@ -1293,9 +1295,9 @@ class CertificateVerificationService {
         eventKey: NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED,
         recipients: [{ userId: request.askedBy }],
         payload: {
-          title: approve ? 'Your change request was approved' : 'Your change request was declined',
+          title: approve ? 'Certificate change approved' : 'Your change request was declined',
           message: `${await this._menteeName(request.menteeId)}: ${approve
-            ? `now ${this._tierLabel(template, request.requestedTier, request.requestedDecision)}.`
+            ? `the grade is now ${this._tierLabel(template, request.requestedTier, request.requestedDecision)}. You can send the certificate.`
             : 'the grade stands.'}${text ? ` "${text}"` : ''}`,
           actionUrl: `/mentor/certificates?verify=${request.templateId}`,
           actionLabel: 'Open the review',

@@ -102,28 +102,28 @@ router.get(
 router.delete(
   '/instances/:id',
   authenticate,
-  authorize(['admin', 'mentor']),
+  authorize(['admin']),
   certificateController.deleteCertificateInstance
 );
 
 router.post(
   '/instances/:id/resend',
   authenticate,
-  authorize(['admin', 'mentor']),
+  authorize(['admin']),
   certificateController.resendCertificateInstance
 );
 
 router.delete(
   '/templates/:id/instances',
   authenticate,
-  authorize(['admin', 'mentor']),
+  authorize(['admin']),
   certificateController.revokeAllTemplateCertificates
 );
 
 router.post(
   '/templates/:id/resend',
   authenticate,
-  authorize(['admin', 'mentor']),
+  authorize(['admin']),
   certificateController.resendAllTemplateCertificates
 );
 

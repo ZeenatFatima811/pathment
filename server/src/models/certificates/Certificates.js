@@ -201,11 +201,11 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
-  // 4. CertificateClanApproval — the admin releasing a clan for issuing.
+  // 4. CertificateClanApproval — the admin recording approval of a clan's review.
   //
   // Verified and approved are different facts. "My mentors have finished
-  // checking" is the mentors' statement; "these may now go out" is the
-  // admin's, and only the second one lets a mentor press send.
+  // checking" is the mentors' statement; approval is the admin's finalization
+  // milestone and lets the clan's mentors perform the separate send action.
   const CertificateClanApproval = sequelize.define('CertificateClanApproval', {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
