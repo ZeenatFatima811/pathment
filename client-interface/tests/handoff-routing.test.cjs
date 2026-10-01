@@ -147,7 +147,10 @@ test('proxy validates cookie fallback, ignores forwarded host, and rewrites scop
     const url = new URL(`https://app.pathment.me${pathname}`); url.clone = () => new URL(url);
     return { nextUrl: url, headers: new Map([['host', 'app.pathment.me'], ['x-forwarded-host', 'evil.pathment.me']]), cookies: { get: () => ({ value: cookie }) } };
   }
-  assert.equal(proxy(request('/login')).url.pathname, '/w/devweekends/login');
+  assert.equal(proxy(request('/')).kind, 'next');
+  assert.equal(proxy(request('/workspaces', 'devweekends')).kind, 'next');
+  assert.equal(proxy(request('/login')).url.pathname, '/');
+  assert.equal(proxy(request('/login', 'acme')).url.pathname, '/w/acme/login');
   assert.equal(proxy(request('/api/health')).kind, 'next');
   assert.equal(proxy(request('/w/acme/report.csv')).url.pathname, '/report.csv');
   assert.equal(proxy(request('/w/app/login')).status, 404);
