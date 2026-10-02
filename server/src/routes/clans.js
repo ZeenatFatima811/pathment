@@ -6,7 +6,6 @@ const { requirePermission, requireAnyPermission, requireAddClanMember, requirePe
 const { validateQuery, validateBody, validateParams } = require('../middlewares/validate');
 const clanSchemas = require('../validations/clanValidation');
 const { PERMISSIONS } = require('../config/permissions');
-const standing = require('../services/standingClanService');
 
 // Current user's clan memberships (any authenticated role).
 router.get('/me/memberships', authenticate, clanController.myMemberships);
@@ -30,12 +29,26 @@ const avatarService = require('../services/clanAvatarService');
 const upload = require('../middlewares/upload');
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
-router.post('/:id/standing-members', authenticate, validateParams(clanSchemas.idParams), catchAsync(async (req, res) => {
-  res.json(successResponse('Mentees added', await standing.addMenteesToStandingClan(req.params.id, req.body.menteeIds, req.user)));
-}));
-router.get('/:id/activity', authenticate, validateParams(clanSchemas.idParams), catchAsync(async (req, res) => {
-  res.json(successResponse('Clan activity', await standing.activity(req.params.id, req.query, req.user)));
-}));
+
+/**
+ * Standing clan mentee roster + activity (after formal program close)
+ */
+router.post(
+  '/:id/standing-members',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  validateBody(clanSchemas.standingMembersBody),
+  clanController.addStandingMembers
+);
+
+router.get(
+  '/:id/activity',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  validateQuery(clanSchemas.standingActivityQuery),
+  clanController.getStandingActivity
+);
+
 const canEditAvatar = catchAsync(async (req, res, next) => { await avatarService.editableClan(req.params.id, req.user); next(); });
 router.post('/:id/avatar', authenticate, validateParams(clanSchemas.idParams), canEditAvatar, upload.singleSafe('file'), catchAsync(async (req, res) => {
   res.json(successResponse('Clan photo updated', await avatarService.setAvatar(req.params.id, req.user, req.file)));

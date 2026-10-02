@@ -2,24 +2,8 @@ const express = require('express');
 const router = express.Router();
 const programController = require('../controllers/programController');
 const { authenticate, authorize, optionalAuth } = require('../middlewares/auth');
-const { validate } = require('../middlewares/validate');
+const { validate, validateBody, validateParams } = require('../middlewares/validate');
 const programValidation = require('../validations/programValidation');
-const lifecycle = require('../services/programLifecycleService');
-const { catchAsync } = require('../middlewares/errorHandler');
-const { successResponse } = require('../utils/responses');
-
-router.get('/:id/completion', authenticate, catchAsync(async (req, res) => {
-  res.json(successResponse('Program completion', await lifecycle.preview(req.params.id, req.user)));
-}));
-router.post('/:id/close', authenticate, catchAsync(async (req, res) => {
-  res.json(successResponse('Program closed', await lifecycle.closeProgram(req.params.id, req.user)));
-}));
-router.post('/:id/reopen', authenticate, catchAsync(async (req, res) => {
-  res.json(successResponse('Program reopened', await lifecycle.reopenProgram(req.params.id, req.body.reason, req.user)));
-}));
-router.get('/:id/results', authenticate, catchAsync(async (req, res) => {
-  res.json(successResponse('Final results', await lifecycle.results(req.params.id, req.user)));
-}));
 
 /**
  * @route   GET /api/programs
@@ -31,6 +15,55 @@ router.get(
   optionalAuth,
   validate(programValidation.getProgramsFilters, 'query'),
   programController.getPrograms
+);
+
+/**
+ * @route   GET /api/programs/:id/completion
+ * @desc    Preview formal program close (certificate notices, canClose)
+ * @access  Admin
+ */
+router.get(
+  '/:id/completion',
+  authenticate,
+  validateParams(programValidation.idParams),
+  programController.previewCompletion
+);
+
+/**
+ * @route   POST /api/programs/:id/close
+ * @desc    Formally close a program
+ * @access  Admin
+ */
+router.post(
+  '/:id/close',
+  authenticate,
+  validateParams(programValidation.idParams),
+  programController.closeProgram
+);
+
+/**
+ * @route   POST /api/programs/:id/reopen
+ * @desc    Reopen a formally closed program for corrections
+ * @access  Admin
+ */
+router.post(
+  '/:id/reopen',
+  authenticate,
+  validateParams(programValidation.idParams),
+  validateBody(programValidation.reopenProgram),
+  programController.reopenProgram
+);
+
+/**
+ * @route   GET /api/programs/:id/results
+ * @desc    Final results for a closed program
+ * @access  Admin, Mentor, Mentee (scoped in service)
+ */
+router.get(
+  '/:id/results',
+  authenticate,
+  validateParams(programValidation.idParams),
+  programController.getFinalResults
 );
 
 /**

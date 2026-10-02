@@ -433,10 +433,30 @@ const revokeClanInvite = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Invite pulled', { invite }));
 });
 
+/** POST /api/clans/:id/standing-members — add mentees to an approved standing clan */
+const addStandingMembers = catchAsync(async (req, res) => {
+  const standing = require('../services/standingClanService');
+  const members = await standing.addMenteesToStandingClan(
+    req.params.id,
+    req.body.menteeIds,
+    req.user
+  );
+  res.status(200).json(successResponse('Mentees added', members));
+});
+
+/** GET /api/clans/:id/activity — standing-clan activity summary */
+const getStandingActivity = catchAsync(async (req, res) => {
+  const standing = require('../services/standingClanService');
+  const activity = await standing.activity(req.params.id, req.query, req.user);
+  res.status(200).json(successResponse('Clan activity', activity));
+});
+
 module.exports = {
   listClanInvites,
   resendClanInvite,
   revokeClanInvite,
+  addStandingMembers,
+  getStandingActivity,
   listClans,
   clanFollowUps,
   clanHealth,
