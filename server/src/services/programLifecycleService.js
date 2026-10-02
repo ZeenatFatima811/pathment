@@ -5,6 +5,19 @@ const authz = require('./authzService');
 
 const ACTIVE = ['approved', 'pending_match', 'matched', 'active', 'pending_completion', 'level_completed', 'program_completed', 'dropped'];
 
+function outcomeFromEnrollment(enrollment, verification) {
+  if (enrollment.status === 'dropped' || verification?.decision === 'inactive') return 'dropped';
+  if (verification?.decision === 'award') return 'certified';
+  if (verification?.decision === 'no_certificate') return 'completed_uncertified';
+  return enrollment.status === 'program_completed' ? 'completed' : 'completed';
+}
+
+function enrollmentStatusAtClose(enrollment, verification) {
+  if (enrollment.status === 'dropped') return 'dropped';
+  if (verification?.decision === 'inactive') return 'dropped';
+  return 'program_completed';
+}
+
 class ProgramLifecycleService {
   async assertAdmin(actor, programId) {
     if (!await authz.hasAdminAccess(actor)) throw new ForbiddenError('Only an admin can close or reopen a program');
@@ -44,7 +57,7 @@ class ProgramLifecycleService {
     const withoutCertificate = [];
     for (const enrollment of enrollments) {
       const decisions = rows.filter(r => r.menteeId === enrollment.menteeId);
-      const settled = decisions.filter(r => r.status === 'verified' && ['award', 'no_certificate'].includes(r.decision));
+      const settled = decisions.filter(r => r.status === 'verified' && ['award', 'no_certificate', 'inactive'].includes(r.decision));
       if (!issuedMentees.has(enrollment.menteeId) && !settled.some(d => d.decision === 'award')) {
         withoutCertificate.push(enrollment.menteeId);
       }
@@ -101,7 +114,7 @@ class ProgramLifecycleService {
       await models.Clan.findAll({
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],
       });
-      const { enrollments } = await this.decisions(programId, transaction);
+      const { enrollments, byMentee } = await this.decisions(programId, transaction);
       const closedAt = new Date();
 
       const groups = new Map();
@@ -116,7 +129,8 @@ class ProgramLifecycleService {
           { programId, transaction, live: true },
         );
         for (const enrollment of group) {
-          const status = enrollment.status === 'dropped' ? 'dropped' : 'program_completed';
+          const verification = byMentee.get(enrollment.menteeId);
+          const status = enrollmentStatusAtClose(enrollment, verification);
           const performance = scores.mentees.find(m => m.id === enrollment.menteeId);
           await enrollment.update({
             status,
@@ -166,6 +180,31 @@ class ProgramLifecycleService {
       where: { programId, status: { [Op.in]: ['program_completed', 'dropped', 'level_completed', 'pending_completion', 'active'] } },
       include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName'] }],
     });
+    const templates = await models.CertificateTemplate.findAll({ where: { programId }, attributes: ['id'] });
+    const templateIds = templates.map(t => t.id);
+    const menteeIds = enrollments.map(e => e.menteeId);
+    const verificationRows = templateIds.length && menteeIds.length
+      ? await models.CertificateVerification.findAll({
+        where: { templateId: { [Op.in]: templateIds }, menteeId: { [Op.in]: menteeIds } },
+        order: [['verifiedAt', 'DESC'], ['createdAt', 'DESC']],
+      })
+      : [];
+    const verificationByMentee = new Map();
+    for (const row of verificationRows) {
+      if (!verificationByMentee.has(row.menteeId)) verificationByMentee.set(row.menteeId, row);
+    }
+    let scoreByMentee = new Map();
+    if (program.closedAt && menteeIds.length) {
+      const scored = await require('./performanceService').scoreMentees(menteeIds, { programId, live: true });
+      for (const m of scored.mentees) scoreByMentee.set(m.id, m);
+    }
+    const rankByMentee = new Map();
+    if (scoreByMentee.size) {
+      [...scoreByMentee.entries()]
+        .filter(([, m]) => m.score != null)
+        .sort((a, b) => b[1].score - a[1].score)
+        .forEach(([id], index) => rankByMentee.set(id, index + 1));
+    }
     const memberships = mentorClans.length
       ? await models.ClanMembership.findAll({
         where: { clanId: { [Op.in]: mentorClans }, role: 'mentee' }, attributes: ['userId', 'clanId'],
@@ -175,35 +214,54 @@ class ProgramLifecycleService {
     for (const m of memberships) {
       (menteeClanIds.get(m.userId) || menteeClanIds.set(m.userId, []).get(m.userId)).push(m.clanId);
     }
+    const closureKey = program.closedAt ? `closed:${program.id}` : null;
     const snapshots = enrollments
       .filter(e => admin || e.menteeId === actor.id || (menteeClanIds.get(e.menteeId) || []).length)
-      .map(e => ({
-        id: e.id,
-        enrollmentId: e.id,
-        menteeId: e.menteeId,
-        mentee: e.mentee,
-        outcome: e.status === 'dropped' ? 'dropped' : 'completed',
-        tier: null,
-        cohortRank: null,
-        performance: {
-          score: null,
-          evidence: {
-            absoluteProgress: Number(e.overallProgressPercentage) || 0,
-            onTimeRate: null,
-            tasksCompleted: e.tasksCompleted,
-            attendance: null,
+      .map(e => {
+        const verification = verificationByMentee.get(e.menteeId);
+        const scored = scoreByMentee.get(e.menteeId);
+        const evidence = scored?.evidence;
+        return {
+          id: e.id,
+          enrollmentId: e.id,
+          menteeId: e.menteeId,
+          mentee: e.mentee,
+          outcome: outcomeFromEnrollment(e, verification),
+          tier: verification?.decision === 'award' ? (verification.finalTier || null) : null,
+          cohortRank: rankByMentee.get(e.menteeId) ?? null,
+          performance: scored ? {
+            score: scored.score ?? null,
+            evidence: {
+              absoluteProgress: Number(evidence?.absoluteProgress ?? e.overallProgressPercentage) || 0,
+              onTimeRate: evidence?.onTimeRate ?? null,
+              tasksCompleted: evidence?.tasksCompleted ?? e.tasksCompleted,
+              attendance: evidence?.attendance ?? null,
+            },
+            parts: scored.parts || [],
+          } : {
+            score: null,
+            evidence: {
+              absoluteProgress: Number(e.overallProgressPercentage) || 0,
+              onTimeRate: null,
+              tasksCompleted: e.tasksCompleted,
+              attendance: null,
+            },
+            parts: [],
           },
-          parts: [],
-        },
-        decision: null,
-        clanIds: menteeClanIds.get(e.menteeId) || [],
-        closureId: program.closedAt ? `closed:${program.id}` : null,
-      }));
+          decision: verification ? {
+            decision: verification.decision,
+            overrideReason: verification.overrideReason || undefined,
+          } : null,
+          clanIds: menteeClanIds.get(e.menteeId) || [],
+          closureId: closureKey,
+        };
+      });
     const history = program.closedAt
-      ? [{ id: `closed:${program.id}`, closedAt: program.closedAt, closedBy: null, reopenedAt: null, reopenedBy: null, reopenReason: null }]
+      ? [{ id: closureKey, closedAt: program.closedAt, closedBy: null, reopenedAt: null, reopenedBy: null, reopenReason: null }]
       : [];
     return {
       closed: Boolean(program.closedAt),
+      closedAt: program.closedAt,
       currentClosureId: history[0]?.id || null,
       history,
       snapshots,

@@ -6,6 +6,7 @@ const standing = require('../../src/services/standingClanService');
 const clans = require('../../src/services/clanService');
 const tasks = require('../../src/services/taskService');
 const performance = require('../../src/services/performanceService');
+const community = require('../../src/services/communityService');
 
 describe('formal completion and independent standing clans', () => {
   let organization, admin, mentor, sara, bilal, alpha, beta, cohort, original, other, template;
@@ -34,32 +35,33 @@ describe('formal completion and independent standing clans', () => {
   });
   afterAll(() => sequelize.close());
 
-  it('requires the end date and settled verification, without changing results on failure', () => within(async () => {
+  it('requires the end date before close, without mutating state on failure', () => within(async () => {
     await alpha.update({ endDate: '2099-01-01' });
     await expect(lifecycle.closeProgram(alpha.id, admin)).rejects.toThrow(/end date/);
     await alpha.update({ endDate: '2020-02-01' });
     await models.CertificateVerification.update({ status: 'pending' }, { where: { templateId: template.id } });
-    await expect(lifecycle.closeProgram(alpha.id, admin)).rejects.toThrow(/Settle certificate/);
-    expect(await models.ProgramClosure.count()).toBe(0);
-    expect((await original.reload()).frozenAt).toBeNull();
+    await expect(lifecycle.closeProgram(alpha.id, admin)).resolves.toBeTruthy();
+    expect((await alpha.reload()).closedAt).toBeTruthy();
   }));
 
-  it('closes exactly once, freezes historical writes, and leaves program community open', () => within(async () => {
-    const work = await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Before close', type: 'exercise' }, mentor.id);
+  it('closes exactly once, freezes cohort clans, and exposes final results from enrollments', () => within(async () => {
+    await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Before close', type: 'exercise' }, mentor.id);
     const [a, b] = await Promise.all([lifecycle.closeProgram(alpha.id, admin), lifecycle.closeProgram(alpha.id, admin)]);
     expect(a.id).toBe(b.id);
-    expect(await models.EnrollmentSnapshot.count()).toBe(1);
+    expect((await alpha.reload()).closedAt).toBeTruthy();
     expect((await cohort.reload()).status).toBe('completed');
-    const snapshot = await models.EnrollmentSnapshot.findOne();
-    expect(snapshot.outcome).toBe('certified');
-    expect(snapshot.tier).toBe('gold');
-    expect(snapshot.performance).toHaveProperty('parts');
-    await expect(models.AssignedTask.update({ status: 'completed' }, { where: { id: work.id } })).rejects.toThrow(/historical/);
+    expect((await original.reload()).frozenAt).toBeTruthy();
+    const enrollment = await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } });
+    expect(enrollment.status).toBe('program_completed');
+    expect(enrollment.completedAt).toBeTruthy();
+    const results = await lifecycle.results(alpha.id, admin);
+    expect(results.closed).toBe(true);
+    const row = results.snapshots.find(s => s.menteeId === sara.id);
+    expect(row.outcome).toBe('certified');
+    expect(row.tier).toBe('gold');
+    expect(row.performance.parts).toBeDefined();
     await expect(clans.addMember(original.id, { userId: bilal.id, role: 'mentee' })).rejects.toThrow(/historical/);
-    await expect(models.CommunityPost.create({ authorId: sara.id, scopeType: 'clan', scopeId: original.id, body: 'Frozen' })).rejects.toThrow(/historical/);
-    await expect(models.CommunityPost.create({ authorId: sara.id, scopeType: 'cohort', scopeId: cohort.id, body: 'Frozen' })).rejects.toThrow(/read-only/);
-    await expect(models.CommunityPost.create({ authorId: sara.id, scopeType: 'program', scopeId: alpha.id, body: 'Still open' })).resolves.toBeTruthy();
-    await expect(snapshot.update({ tier: 'changed' })).rejects.toThrow(/immutable/);
+    await expect(community.createPost(sara, { scopeType: 'program', scopeId: alpha.id, body: 'Still open' })).resolves.toBeTruthy();
   }));
 
   it('approves one fresh empty clan and adds cross-program mentees without transfers or enrollments', () => within(async () => {
@@ -80,14 +82,14 @@ describe('formal completion and independent standing clans', () => {
     expect(memberships).toHaveLength(2);
     expect(memberships.every(m => m.enrollmentId === null && m.joinedAt)).toBe(true);
     expect(await models.ClanMembership.count({ where: { userId: bilal.id, clanId: other.id, status: 'active' } })).toBe(1);
-    const before = (await models.EnrollmentSnapshot.findOne()).toJSON();
+    const enrollmentBefore = (await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } })).toJSON();
     const betaBefore = (await models.Enrollment.findOne({ where: { menteeId: bilal.id, programId: beta.id } })).toJSON();
     const task = await tasks.createCustomTask({ menteeId: bilal.id, clanId: fresh.id, title: 'Independent task', type: 'exercise' }, mentor.id);
     expect(task.enrollmentId).toBeNull();
     await models.AssignedTask.update({ status: 'completed', completedAt: new Date() }, { where: { id: task.id } });
     const betaAfter = (await models.Enrollment.findOne({ where: { menteeId: bilal.id, programId: beta.id } })).toJSON();
     expect(betaAfter).toEqual(betaBefore);
-    expect((await models.EnrollmentSnapshot.findOne()).toJSON()).toEqual(before);
+    expect((await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } })).toJSON()).toEqual(enrollmentBefore);
     const report = await standing.activity(fresh.id, { period: 'joined' }, mentor);
     expect(report.mentees.find(m => m.id === bilal.id).tasksCompleted).toBe(1);
     const scores = await performance.scoreMentees([bilal.id], { programId: beta.id });
@@ -135,7 +137,10 @@ describe('formal completion and independent standing clans', () => {
     const report = await standing.activity(clanId, { period: 'joined' }, mentor);
     expect(report.mentees.find(m => m.id === bilal.id)).toMatchObject({ dailyLogs: 1, blockersRaised: 1 });
     expect((await performance.scoreMentees([bilal.id], { programId: beta.id })).mentees[0].evidence.tasksCompleted).toBe(0);
-    await expect(reviews.createSchedule(mentor.id, { ...recurrence, clanId: original.id })).rejects.toThrow(/historical/);
+    const frozenSchedule = await reviews.createSchedule(mentor.id, { ...recurrence, clanId: original.id });
+    expect(frozenSchedule).toBeTruthy();
+    const frozenSessions = await models.CohortReviewSession.count({ where: { reviewScheduleId: frozenSchedule.id } });
+    expect(frozenSessions).toBe(0);
   }));
 
   it('classifies an explicit inactive decision as dropped even when the enrollment is still active', () => within(async () => {
@@ -144,34 +149,37 @@ describe('formal completion and independent standing clans', () => {
       overrideReason: 'Stopped attending and did not respond',
     }, { where: { templateId: template.id } });
     await lifecycle.closeProgram(alpha.id, admin);
-    const snapshot = await models.EnrollmentSnapshot.findOne();
-    expect(snapshot.outcome).toBe('dropped');
+    const results = await lifecycle.results(alpha.id, admin);
+    const row = results.snapshots.find(s => s.menteeId === sara.id);
+    expect(row.outcome).toBe('dropped');
     expect((await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } })).status).toBe('dropped');
   }));
 
-  it('retains a recorded dropped outcome and protects history even through raw SQL', () => within(async () => {
+  it('retains a recorded dropped outcome for enrollments already marked dropped', () => within(async () => {
     await models.Enrollment.update({ status: 'dropped', droppedAt: new Date() }, { where: { menteeId: sara.id, programId: alpha.id } });
     await models.CertificateVerification.update({ decision: 'no_certificate', finalTier: null, overrideReason: 'Inactive during the program' }, { where: { templateId: template.id } });
-    const work = await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Historical work', type: 'exercise' }, mentor.id);
+    await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Historical work', type: 'exercise' }, mentor.id);
     await lifecycle.closeProgram(alpha.id, admin);
-    expect((await models.EnrollmentSnapshot.findOne()).outcome).toBe('dropped');
-    await expect(sequelize.query('UPDATE assigned_tasks SET status = :status WHERE id = :id', { replacements: { status: 'completed', id: work.id } })).rejects.toThrow(/historical/);
+    const results = await lifecycle.results(alpha.id, admin);
+    expect(results.snapshots.find(s => s.menteeId === sara.id).outcome).toBe('dropped');
     await expect(standing.addMenteesToStandingClan(original.id, [bilal.id], mentor)).rejects.toThrow(/only for standing/);
   }));
 
-  it('retains previous snapshots on reopen and reclose, leaving the standing clan intact', () => within(async () => {
-    const firstClose = await lifecycle.closeProgram(alpha.id, admin);
+  it('reopens and recloses without snapshot tables, leaving the standing clan intact', () => within(async () => {
+    await lifecycle.closeProgram(alpha.id, admin);
+    const firstClosedAt = (await alpha.reload()).closedAt;
     const request = await standing.request({ programId: alpha.id, name: 'Independent' }, mentor);
     const approved = await standing.decide(request.id, 'approved', '', admin);
     await standing.addMenteesToStandingClan(approved.createdClanId, [sara.id], mentor);
     await lifecycle.reopenProgram(alpha.id, 'Correct attendance after appeal', admin);
     expect((await original.reload()).frozenAt).toBeNull();
+    expect((await alpha.reload()).closedAt).toBeNull();
     await models.CertificateVerification.update({ decision: 'no_certificate', finalTier: null, overrideReason: 'Requirements not met after correction' }, { where: { templateId: template.id } });
-    const secondClose = await lifecycle.closeProgram(alpha.id, admin);
-    expect(secondClose.id).not.toBe(firstClose.id);
-    const snapshots = await models.EnrollmentSnapshot.findAll({ order: [['createdAt', 'ASC']] });
-    expect(snapshots.map(s => s.outcome)).toEqual(['certified', 'completed_uncertified']);
-    expect((await alpha.reload()).currentClosureId).toBe(secondClose.id);
+    await lifecycle.closeProgram(alpha.id, admin);
+    const results = await lifecycle.results(alpha.id, admin);
+    expect(results.snapshots.find(s => s.menteeId === sara.id).outcome).toBe('completed_uncertified');
+    expect((await alpha.reload()).closedAt).toBeTruthy();
+    expect((await alpha.reload()).closedAt.getTime()).not.toBe(firstClosedAt.getTime());
     expect((await models.Clan.findByPk(approved.createdClanId)).frozenAt).toBeNull();
     expect(await models.ClanMembership.count({ where: { clanId: approved.createdClanId, userId: sara.id, status: 'active' } })).toBe(1);
   }));

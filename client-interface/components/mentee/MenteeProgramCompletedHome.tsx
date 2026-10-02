@@ -38,9 +38,7 @@ const OUTCOME_BADGE: Record<'good' | 'ok' | 'muted', string> = {
 };
 
 function pickMine(results: FinalResults, userId?: string, firstName?: string, lastName?: string): FinalSnapshot | null {
-  const current = results.currentClosureId
-    ? results.snapshots.filter((s) => s.closureId === results.currentClosureId)
-    : results.snapshots;
+  const current = results.snapshots;
   if (!current.length) return null;
   if (userId) {
     const byId = current.find((s) => s.menteeId === userId);
@@ -77,7 +75,7 @@ const DESTINATIONS = [
   {
     href: '/mentee/progress',
     title: 'Final results',
-    description: 'See the full saved snapshot for this close.',
+    description: 'See your final outcome and progress for this program.',
     icon: Trophy,
   },
 ] as const;
@@ -117,8 +115,7 @@ export function MenteeProgramCompletedHome({
     ? pickMine(results, user?.id, user?.firstName, user?.lastName)
     : null;
   const firstName = user?.firstName || '';
-  const closedAt = results?.history.find((h) => h.id === results.currentClosureId)?.closedAt
-    || results?.history[0]?.closedAt;
+  const closedAt = results?.closedAt || results?.history[0]?.closedAt;
 
   if (loading) {
     return (

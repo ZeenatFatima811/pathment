@@ -5,6 +5,8 @@ export interface ClosurePreview {
   /** False on Starter/free plans — close/reopen UI should upgrade instead of offer close. */
   featureAvailable?: boolean;
   unresolved: { id: string; firstName: string; lastName: string }[];
+  certificatesNotIssued?: { id: string; firstName: string; lastName: string }[];
+  certificatesNotIssuedMessage?: string | null;
 }
 export interface FinalSnapshot {
   id: string; closureId: string; menteeId?: string; outcome: string; tier: string | null; cohortRank: number | null;
@@ -14,7 +16,10 @@ export interface FinalSnapshot {
     evidence: { absoluteProgress: number; onTimeRate: number; tasksCompleted: number; attendance: { present: number; absent: number; excused: number } | null } };
 }
 export interface FinalResults {
-  closed: boolean; currentClosureId: string | null;
+  closed: boolean;
+  /** ISO timestamp when the program was formally closed (single close — no version history). */
+  closedAt?: string | null;
+  currentClosureId: string | null;
   history: { id: string; closedAt: string; reopenedAt: string | null; reopenReason: string | null }[];
   snapshots: FinalSnapshot[];
 }

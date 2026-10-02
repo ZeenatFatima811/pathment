@@ -181,7 +181,7 @@ function DetailDrawer({
 
 /**
  * Post-close Insights presentation — same visual family as live Reports /
- * Progress scores / Leaderboard, fed by frozen closure snapshots.
+ * Progress scores / Leaderboard, fed by enrollment + certificate data after close.
  */
 export function MentorFinalResults({
   programId,
@@ -234,7 +234,7 @@ export function MentorFinalResults({
     });
   }, [results, selected]);
 
-  const closedAt = results?.history.find((h) => h.id === selected)?.closedAt;
+  const closedAt = results?.closedAt || results?.history.find((h) => h.id === selected)?.closedAt;
   const closedLabel = closedAt
     ? new Date(closedAt).toLocaleDateString(undefined, {
         year: 'numeric',
@@ -401,7 +401,7 @@ export function MentorFinalResults({
             <h1 className="text-slate-900 mb-1">Final cohort report</h1>
             <p className="text-slate-600">
               {clanName ? `${clanName} · ` : ''}
-              Snapshot saved at close. Read-only history for this cohort.
+              Final outcomes from enrollments and certificate decisions. Cohort clan is read-only.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">

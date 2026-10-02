@@ -53,7 +53,7 @@ export function ProgramCompletionPanel({
   const featureAvailable = preview?.featureAvailable !== false;
   const close = async () => {
     if (!featureAvailable) return;
-    if (!await confirm({ title: 'Close this program?', description: 'Save final outcomes and performance, complete all cohorts, and make cohort clans and their communities read-only. The program community stays open.' })) return;
+    if (!await confirm({ title: 'Close this program?', description: 'Mark the program completed, update enrollments with final progress, freeze cohort clans (read-only roster and clan community), and complete cohorts. The program community stays open.' })) return;
     setBusy(true);
     try { await completionApi.close(programId); toast.success('Program closed and final results saved'); await load(); onChange?.(); }
     catch (e) { toast.error(extractApiErrorMessage(e, 'Could not close the program')); await load(); }
@@ -95,21 +95,32 @@ export function ProgramCompletionPanel({
   return <section className="my-6 space-y-4 rounded-2xl border border-slate-200 bg-card p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="flex items-center gap-2 text-base font-semibold text-slate-900"><Archive className="h-5 w-5" /> Program completion</h2>
-        <p className="mt-1 text-sm text-slate-500">{results.closed ? 'Final results are saved. Cohort clans are historical and read-only.' : preview?.ended ? 'The scheduled period has ended. Review final certificate decisions before closing.' : 'The scheduled period is still open. Formal closure becomes available on the end date.'}</p></div>
+        <p className="mt-1 text-sm text-slate-500">{results.closed ? 'Program is closed. Results reflect enrollments and certificate decisions; cohort clans are read-only.' : preview?.ended ? 'The scheduled period has ended. You can close even if some certificates are unsettled — review decisions when you can.' : 'The scheduled period is still open. Formal closure becomes available on the end date.'}</p></div>
       {admin && featureAvailable && (results.closed ? <button className={button} onClick={() => setReopening(true)}>Reopen for correction</button> : <button className={button} disabled={busy || !preview?.canClose} onClick={close}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Close program</button>)}
     </div>
     {preview && !preview.closed && preview.unresolved.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-      <p>Certificate decisions need attention for {preview.unresolved.length} mentee(s).</p>
+      <p>Certificate decisions need attention for {preview.unresolved.length} mentee(s). Closing is still allowed.</p>
       <p className="mt-1">{preview.unresolved.slice(0, 8).map(u => `${u.firstName} ${u.lastName}`).join(', ')}{preview.unresolved.length > 8 ? '…' : ''}</p>
       <Link href="/admin/certificates" className="mt-2 inline-block font-medium underline">Review certificate decisions</Link>
     </div>}
+    {preview && !preview.closed && (preview.certificatesNotIssued?.length ?? 0) > 0 && <div className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">
+      <p>{preview.certificatesNotIssuedMessage || 'Some mentees do not have issued certificates yet. You can still close the program.'}</p>
+      <p className="mt-1">{preview.certificatesNotIssued!.slice(0, 8).map(u => `${u.firstName} ${u.lastName}`).join(', ')}{preview.certificatesNotIssued!.length > 8 ? '…' : ''}</p>
+    </div>}
     {showResults && results.history.length > 0 && <>
-      <div className="flex flex-wrap items-center justify-between gap-3"><SelectMenu ariaLabel="Result version" value={selected} onChange={setSelected} options={results.history.map(h => ({ value: h.id, label: `${new Date(h.closedAt).toLocaleString()}${h.id === results.currentClosureId ? results.closed ? ' · Current result' : ' · Previous close' : ' · Earlier close'}` }))} /><button onClick={exportResults} className="inline-flex items-center gap-2 text-sm text-brand-600"><Download className="h-4 w-4" /> Export results</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {results.history.length > 1 ? (
+          <SelectMenu ariaLabel="Result version" value={selected} onChange={setSelected} options={results.history.map(h => ({ value: h.id, label: `${new Date(h.closedAt).toLocaleString()}${h.id === results.currentClosureId ? results.closed ? ' · Current result' : ' · Previous close' : ' · Earlier close'}` }))} />
+        ) : (
+          <p className="text-sm text-slate-600">Closed {results.closedAt || results.history[0]?.closedAt ? new Date(results.closedAt || results.history[0]!.closedAt).toLocaleString() : '—'}</p>
+        )}
+        <button onClick={exportResults} className="inline-flex items-center gap-2 text-sm text-brand-600"><Download className="h-4 w-4" /> Export results</button>
+      </div>
       {results.history.find(h => h.id === selected)?.reopenReason && <p className="text-sm text-slate-500">Reopened: {results.history.find(h => h.id === selected)?.reopenReason}</p>}
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b text-xs text-slate-500"><tr>{['Mentee', 'Outcome', 'Tier', 'Score', 'Completion', 'On time', 'Tasks', 'Attendance', 'Rank', ''].map(t => <th key={t || 'actions'} className="whitespace-nowrap p-2">{t}</th>)}</tr></thead><tbody>{snapshots.map(s => <tr key={s.id} className="border-b border-slate-100"><td className="p-2">{s.mentee.firstName} {s.mentee.lastName}</td><td className="p-2">{s.outcome.replaceAll('_', ' ')}</td><td className="p-2">{s.tier || '—'}</td><td className="p-2">{s.performance.score ?? '—'}</td><td className="p-2">{s.performance.evidence.absoluteProgress}%</td><td className="p-2">{s.performance.evidence.onTimeRate ?? '—'}%</td><td className="p-2">{s.performance.evidence.tasksCompleted}</td><td className="p-2">{s.performance.evidence.attendance ? `${s.performance.evidence.attendance.present} present / ${s.performance.evidence.attendance.absent} absent` : '—'}</td><td className="p-2">{s.cohortRank ?? '—'}</td><td className="p-2"><button type="button" onClick={() => setDetail(s)} className="text-brand-600 hover:underline">Details</button></td></tr>)}</tbody></table>{!snapshots.length && <p className="p-4 text-sm text-slate-500">No final results in your roster for this close.</p>}</div>
-      <p className="flex items-center gap-2 text-xs text-slate-500"><LockKeyhole className="h-3.5 w-3.5" /> These values are saved at close and stay unchanged when other clan memberships change.</p>
+      <p className="flex items-center gap-2 text-xs text-slate-500"><LockKeyhole className="h-3.5 w-3.5" /> Progress on enrollments is updated at close; scores may reflect live calculation on a closed program.</p>
     </>}
-    <Drawer open={reopening && featureAvailable} onClose={() => !busy && setReopening(false)} title="Reopen program" subtitle="Previous results remain in the history. Save revised results by closing again." footer={<button className={button} disabled={busy || !reason.trim()} onClick={reopen}>{busy ? 'Reopening…' : 'Reopen program'}</button>}><label className="block text-sm font-medium" htmlFor="reopen-reason">Reason for correction or appeal</label><textarea id="reopen-reason" value={reason} maxLength={4000} onChange={e => setReason(e.target.value)} className="mt-2 min-h-32 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm" /></Drawer>
+    <Drawer open={reopening && featureAvailable} onClose={() => !busy && setReopening(false)} title="Reopen program" subtitle="Clears the close, unfreezes cohort clans, and lets you correct data before closing again." footer={<button className={button} disabled={busy || !reason.trim()} onClick={reopen}>{busy ? 'Reopening…' : 'Reopen program'}</button>}><label className="block text-sm font-medium" htmlFor="reopen-reason">Reason for correction or appeal</label><textarea id="reopen-reason" value={reason} maxLength={4000} onChange={e => setReason(e.target.value)} className="mt-2 min-h-32 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm" /></Drawer>
     <Drawer open={Boolean(detail)} onClose={() => setDetail(null)} title={detail ? `${detail.mentee.firstName} ${detail.mentee.lastName}` : 'Result detail'} subtitle={detail ? `${detail.outcome.replaceAll('_', ' ')}${detail.tier ? ` · ${detail.tier}` : ''}` : undefined}>
       {detail && <div className="space-y-4 text-sm">
         <div className="grid grid-cols-2 gap-3">
