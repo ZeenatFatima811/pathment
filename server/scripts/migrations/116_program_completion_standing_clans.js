@@ -5,8 +5,8 @@ const sequelize = require('./_db');
  * - Close marker: programs.closed_at only (no closure/snapshot history tables).
  * - Standing work: enrollment_id nullable on assigned_tasks (standing clans have no enrollment);
  *   cohort vs standing is decided by clans.kind + application rules, not a denormalized column.
- * - Plan flag programCompletionStanding: paid plans only (standing requests).
- *   Program closeout itself stays available on every plan.
+ * - Standing-clan plan flag (programCompletionStanding) lives on plans via migration 110;
+ *   entitlement also falls back to paid price. Program closeout is available on every plan.
  */
 async function up() {
   await sequelize.transaction(async transaction => {
@@ -17,11 +17,7 @@ async function up() {
       ALTER TABLE programs ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;`);
 
     // Standing-clan tasks have no program enrollment; cohort tasks still carry enrollment_id.
-    // Drop assignment_kind if an earlier draft of this migration added it.
-    await q(`ALTER TABLE assigned_tasks DROP CONSTRAINT IF EXISTS assigned_tasks_assignment_kind_enrollment;
-      ALTER TABLE assigned_tasks DROP CONSTRAINT IF EXISTS assigned_tasks_assignment_kind_check;
-      ALTER TABLE assigned_tasks DROP COLUMN IF EXISTS assignment_kind;
-      ALTER TABLE assigned_tasks ALTER COLUMN enrollment_id DROP NOT NULL;`);
+    await q(`ALTER TABLE assigned_tasks ALTER COLUMN enrollment_id DROP NOT NULL`);
 
     for (const table of ['blockers', 'delay_events']) {
       await q(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS clan_id UUID REFERENCES clans(id);
@@ -43,20 +39,6 @@ async function up() {
       UNIQUE(organization_id, created_clan_id)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS standing_request_pending_unique ON standing_clan_requests(organization_id, mentor_id, program_id) WHERE status='pending';`);
-
-    // Standing-clan requests: Starter/free → false; Growth/Scale (and any paid) → true.
-    // Key-based OR is required because Growth/Scale may be priced at $0 in some envs.
-    await q(`UPDATE plans
-      SET features = COALESCE(features, '{}'::jsonb)
-        || jsonb_build_object(
-             'programCompletionStanding',
-             (
-               lower(key) IN ('growth', 'scale')
-               OR COALESCE(monthly_price_cents, 0) > 0
-               OR COALESCE(annual_price_cents, 0) > 0
-             )
-           ),
-          updated_at = NOW()`);
   });
 }
 
