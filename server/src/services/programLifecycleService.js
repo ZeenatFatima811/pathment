@@ -160,7 +160,7 @@ class ProgramLifecycleService {
       if (!program.closedAt) throw new ValidationError('This program has no formal close to reopen');
       await program.update({ status: 'published', closedAt: null }, { transaction });
       await models.Clan.update({ frozenAt: null }, { where: { programId, kind: 'cohort' }, transaction });
-      await models.Cohort.update({ status: 'active' }, { where: { programId, status: 'completed' }, transaction });
+      await models.Cohort.update({ status: 'running' }, { where: { programId, status: 'completed' }, transaction });
       transaction.afterCommit(() => require('./clanHealthService').invalidate());
       return { programId, reopenedAt: new Date(), reopenReason: reason.trim(), reopenedBy: actor.id };
     });

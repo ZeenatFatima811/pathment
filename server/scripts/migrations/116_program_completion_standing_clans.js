@@ -44,12 +44,17 @@ async function up() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS standing_request_pending_unique ON standing_clan_requests(organization_id, mentor_id, program_id) WHERE status='pending';`);
 
-    // Standing-clan requests: free/Starter → false; paid (Growth/Scale/etc.) → true.
+    // Standing-clan requests: Starter/free → false; Growth/Scale (and any paid) → true.
+    // Key-based OR is required because Growth/Scale may be priced at $0 in some envs.
     await q(`UPDATE plans
       SET features = COALESCE(features, '{}'::jsonb)
         || jsonb_build_object(
              'programCompletionStanding',
-             (COALESCE(monthly_price_cents, 0) > 0 OR COALESCE(annual_price_cents, 0) > 0)
+             (
+               lower(key) IN ('growth', 'scale')
+               OR COALESCE(monthly_price_cents, 0) > 0
+               OR COALESCE(annual_price_cents, 0) > 0
+             )
            ),
           updated_at = NOW()`);
   });

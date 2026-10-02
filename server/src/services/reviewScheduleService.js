@@ -91,6 +91,9 @@ class ReviewScheduleService {
   /** Send the invite (email + in-app) for the schedule's nearest occurrence, now,
    *  unconditionally — used when a schedule is (re)created. */
   async _announceNext(schedule) {
+    const clan = await models.Clan.findByPk(schedule.clanId);
+    // Frozen cohort clans stay historical — do not create or announce sessions.
+    if (clan?.kind !== 'standing' && clan?.frozenAt) return;
     const occ = nextOccurrences(schedule, new Date(), 1);
     if (!occ.length) return;
     const session = await this._findOrCreateSession(schedule, occ[0]);
