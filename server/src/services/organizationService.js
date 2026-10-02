@@ -245,6 +245,7 @@ class OrganizationService {
   async entitlement(organizationId, feature) {
     const { plan } = await this.subscription(organizationId);
     if (feature === 'programCompletionStanding') {
+      // Standing-clan requests only. Program closeout is not plan-gated.
       if (typeof plan.features?.programCompletionStanding === 'boolean') {
         return plan.features.programCompletionStanding;
       }

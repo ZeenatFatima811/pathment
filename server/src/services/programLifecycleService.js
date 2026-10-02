@@ -14,14 +14,6 @@ class ProgramLifecycleService {
     if (programId && !await authz.can(actor, require('../config/permissions').PERMISSIONS.PROGRAM_MANAGE, { programId })) throw new ForbiddenError('You cannot manage this program');
   }
 
-  async assertCloseoutPlan(organizationId) {
-    await require('./organizationService').requireEntitlement(
-      organizationId,
-      'programCompletionStanding',
-      'Program closeout and standing clans are available on Growth and Scale plans',
-    );
-  }
-
   async hasEnded(program, now = new Date()) {
     const org = await models.Organization.findByPk(program.organizationId, { attributes: ['timezone'] });
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: org?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
@@ -56,18 +48,15 @@ class ProgramLifecycleService {
     await this.assertAdmin(actor, programId);
     const program = await models.Program.findByPk(programId);
     if (!program) throw new NotFoundError('Program not found');
-    const featureAvailable = await require('./organizationService').entitlement(
-      program.organizationId,
-      'programCompletionStanding',
-    );
+    // Closeout is included on every plan; standing-clan requests stay paid-gated elsewhere.
     const { enrollments, unresolved } = await this.decisions(programId);
     const ended = await this.hasEnded(program);
     const pending = unresolved.length ? await models.User.findAll({ where: { id: { [Op.in]: unresolved } }, attributes: ['id', 'firstName', 'lastName'] }) : [];
     return {
       ended,
       closed: Boolean(program.closedAt),
-      canClose: featureAvailable && ended && !program.closedAt && !unresolved.length,
-      featureAvailable,
+      canClose: ended && !program.closedAt && !unresolved.length,
+      featureAvailable: true,
       enrollmentCount: enrollments.length,
       unresolved: pending,
       currentClosureId: program.currentClosureId,
@@ -81,7 +70,6 @@ class ProgramLifecycleService {
       const options = { transaction, [LIFECYCLE]: true };
       const program = await models.Program.findByPk(programId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!program) throw new NotFoundError('Program not found');
-      await this.assertCloseoutPlan(program.organizationId);
       if (program.closedAt && program.currentClosureId) return models.ProgramClosure.findByPk(program.currentClosureId, { transaction });
       if (!await this.hasEnded(program)) throw new ValidationError('The program end date must be reached before closing');
       // Lock the cohort clans before reading evidence. Standing work has its own locks.
@@ -137,7 +125,6 @@ class ProgramLifecycleService {
       const options = { transaction, [LIFECYCLE]: true };
       const program = await models.Program.findByPk(programId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!program) throw new NotFoundError('Program not found');
-      await this.assertCloseoutPlan(program.organizationId);
       if (!program.closedAt || !program.currentClosureId) throw new ValidationError('This program has no formal close to reopen');
       const closure = await models.ProgramClosure.findByPk(program.currentClosureId, { transaction });
       await closure.update({ reopenedAt: new Date(), reopenedBy: actor.id, reopenReason: reason.trim() }, options);

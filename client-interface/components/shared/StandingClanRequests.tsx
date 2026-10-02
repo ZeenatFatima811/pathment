@@ -13,7 +13,7 @@ import Link from 'next/link';
 
 const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
 const field = 'mt-2 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm';
-const UPGRADE_COPY = 'Program closeout and standing clans are available on Growth and Scale plans.';
+const UPGRADE_COPY = 'Standing clan requests are available on Growth and Scale plans.';
 
 export function StandingClanRequests({
   admin = false,

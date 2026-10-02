@@ -2,11 +2,11 @@
 
 import { useOrganization } from '@/lib/context/OrganizationContext';
 
-/** Plan feature key for formal program close + standing clans (paid plans only). */
+/** Plan feature key for standing-clan requests (paid plans only). Program closeout is available on every plan. */
 export const PROGRAM_COMPLETION_STANDING_FEATURE = 'programCompletionStanding';
 
 /**
- * True when the current workspace plan includes program closeout / standing clans.
+ * True when the current workspace plan includes standing-clan requests.
  * Starter and other free (monthly & annual 0) plans are excluded.
  */
 export function useProgramCloseoutEnabled(): boolean {

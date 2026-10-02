@@ -18,6 +18,7 @@ const LEGACY_DEVWEEKENDS_OVERRIDES = Object.freeze({
   }),
   features: Object.freeze({
     certificates: true, aiEvaluation: true, customBranding: true,
+    // programCompletionStanding = standing-clan requests (paid). Program closeout is available on every plan.
     customDomain: true, advancedAnalytics: true, sso: true, programCompletionStanding: true,
   }),
 });

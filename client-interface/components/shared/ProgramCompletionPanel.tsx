@@ -9,10 +9,8 @@ import { SelectMenu } from './SelectMenu';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { completionApi, type ClosurePreview, type FinalResults, type FinalSnapshot } from '@/lib/services/program-completion-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { useProgramCloseoutEnabled } from '@/lib/hooks/useProgramCloseoutEnabled';
 
 const button = 'inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
-const UPGRADE_COPY = 'Program closeout and standing clans are available on Growth and Scale plans.';
 
 function decisionText(snapshot: FinalSnapshot) {
   const d = snapshot.decision || {};
@@ -35,7 +33,6 @@ export function ProgramCompletionPanel({
   showResults?: boolean;
   onChange?: () => void;
 }) {
-  const closeoutEnabled = useProgramCloseoutEnabled();
   const [preview, setPreview] = useState<ClosurePreview | null>(null);
   const [results, setResults] = useState<FinalResults | null>(null);
   const [selected, setSelected] = useState('');
@@ -53,7 +50,7 @@ export function ProgramCompletionPanel({
     } catch (e) { setError(extractApiErrorMessage(e, 'Could not load program completion')); }
   }, [programId, admin]);
   useEffect(() => { void load(); }, [load]);
-  const featureAvailable = closeoutEnabled && (preview?.featureAvailable !== false);
+  const featureAvailable = preview?.featureAvailable !== false;
   const close = async () => {
     if (!featureAvailable) return;
     if (!await confirm({ title: 'Close this program?', description: 'Save final outcomes and performance, complete all cohorts, and make cohort clans and their communities read-only. The program community stays open.' })) return;
@@ -101,12 +98,6 @@ export function ProgramCompletionPanel({
         <p className="mt-1 text-sm text-slate-500">{results.closed ? 'Final results are saved. Cohort clans are historical and read-only.' : preview?.ended ? 'The scheduled period has ended. Review final certificate decisions before closing.' : 'The scheduled period is still open. Formal closure becomes available on the end date.'}</p></div>
       {admin && featureAvailable && (results.closed ? <button className={button} onClick={() => setReopening(true)}>Reopen for correction</button> : <button className={button} disabled={busy || !preview?.canClose} onClick={close}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Close program</button>)}
     </div>
-    {admin && !featureAvailable && (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
-        {UPGRADE_COPY}{' '}
-        <Link href="/admin/settings?tab=plan" className="font-medium underline">View plans</Link>
-      </div>
-    )}
     {preview && !preview.closed && preview.unresolved.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
       <p>Certificate decisions need attention for {preview.unresolved.length} mentee(s).</p>
       <p className="mt-1">{preview.unresolved.slice(0, 8).map(u => `${u.firstName} ${u.lastName}`).join(', ')}{preview.unresolved.length > 8 ? '…' : ''}</p>

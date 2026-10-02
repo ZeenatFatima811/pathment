@@ -6,11 +6,11 @@ const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
 
 class StandingClanService {
-  async assertCloseoutPlan(organizationId) {
+  async assertStandingClanPlan(organizationId) {
     await require('./organizationService').requireEntitlement(
       organizationId,
       'programCompletionStanding',
-      'Program closeout and standing clans are available on Growth and Scale plans',
+      'Standing clan requests are available on Growth and Scale plans',
     );
   }
 
@@ -32,7 +32,7 @@ class StandingClanService {
     if (!(await this.eligiblePrograms(actor)).some(p => p.id === input.programId)) throw new ForbiddenError('You can request a standing clan after a program you mentor has been formally closed');
     const program = await models.Program.findByPk(input.programId, { attributes: ['id', 'organizationId'] });
     if (!program) throw new NotFoundError('Program not found');
-    await this.assertCloseoutPlan(program.organizationId);
+    await this.assertStandingClanPlan(program.organizationId);
     return sequelize.transaction(async transaction => {
       // Serialize submissions by this mentor so retries return the pending request.
       await models.User.findByPk(actor.id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -66,7 +66,7 @@ class StandingClanService {
       if (decision === 'approved') {
         const program = await models.Program.findByPk(request.programId, { transaction, lock: transaction.LOCK.SHARE });
         if (!program?.closedAt || program.status !== 'completed') throw new ValidationError('Close the program before approving this request');
-        await this.assertCloseoutPlan(program.organizationId);
+        await this.assertStandingClanPlan(program.organizationId);
         clan = await clanService.createClan({ programId: request.programId, name: request.name, description: request.description,
           kind: 'standing', leadMentorId: request.mentorId }, actor.id, { transaction, standingApproval: true });
       }

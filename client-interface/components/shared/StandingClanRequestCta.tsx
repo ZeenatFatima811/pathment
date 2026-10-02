@@ -18,7 +18,7 @@ const field = 'mt-2 w-full rounded-lg border border-slate-300 bg-card p-3 text-s
 /**
  * Compact standing-clan request control for the completed-history banner.
  * Hidden once this program already has an approved standing clan for the mentor.
- * Hidden on Starter / free plans (paid closeout feature).
+ * Hidden on Starter / free plans (paid standing-clan feature).
  */
 export function StandingClanRequestCta({
   programId,
