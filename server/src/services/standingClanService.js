@@ -30,16 +30,50 @@ class StandingClanService {
     const name = String(input.name || '').trim();
     if (!name || name.length > 150) throw new ValidationError('Choose a clan name of 1–150 characters');
     if (!(await this.eligiblePrograms(actor)).some(p => p.id === input.programId)) throw new ForbiddenError('You can request a standing clan after a program you mentor has been formally closed');
-    const program = await models.Program.findByPk(input.programId, { attributes: ['id', 'organizationId'] });
+    const program = await models.Program.findByPk(input.programId, { attributes: ['id', 'name', 'organizationId'] });
     if (!program) throw new NotFoundError('Program not found');
     await this.assertStandingClanPlan(program.organizationId);
-    return sequelize.transaction(async transaction => {
+    const created = await sequelize.transaction(async transaction => {
       // Serialize submissions by this mentor so retries return the pending request.
       await models.User.findByPk(actor.id, { transaction, lock: transaction.LOCK.UPDATE });
       const existing = await models.StandingClanRequest.findOne({ where: { mentorId: actor.id, programId: input.programId, status: 'pending' }, transaction });
-      if (existing) return existing;
-      return models.StandingClanRequest.create({ mentorId: actor.id, programId: input.programId, name, description: String(input.description || '').trim().slice(0, 4000) || null }, { transaction });
+      if (existing) return { request: existing, isNew: false };
+      const request = await models.StandingClanRequest.create({
+        mentorId: actor.id,
+        programId: input.programId,
+        name,
+        description: String(input.description || '').trim().slice(0, 4000) || null,
+      }, { transaction });
+      return { request, isNew: true };
     });
+    if (created.isNew) {
+      await this._notifyAdminsOfRequest(created.request, actor, program);
+    }
+    return created.request;
+  }
+
+  async _notifyAdminsOfRequest(request, mentor, program) {
+    try {
+      const admins = await require('./workspaceRecipients').admins();
+      if (!admins.length) return;
+      const mentorName = [mentor.firstName, mentor.lastName].filter(Boolean).join(' ').trim() || 'A mentor';
+      const programName = program?.name || 'a completed program';
+      await require('./notificationOrchestrator').dispatch({
+        eventKey: require('../config/notificationMatrix').NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_CREATED,
+        recipients: admins.map(a => ({ userId: a.id })),
+        payload: {
+          title: 'Standing clan request',
+          message: `${mentorName} requested "${request.name}" for ${programName}. Approve or reject in notifications.`,
+          actionUrl: '/admin/requests?tab=standing',
+          actionLabel: 'Review request',
+          relatedEntityType: 'standing_clan_request',
+          relatedEntityId: request.id,
+        },
+        dedupe: { relatedEntityType: 'standing_clan_request', relatedEntityId: request.id },
+      });
+    } catch (err) {
+      console.warn('standingClanService: request notification failed', err?.message || err);
+    }
   }
 
   async list(actor) {

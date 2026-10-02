@@ -103,7 +103,7 @@ function AdminClanRequestsInner() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-slate-900 mb-2">Clan requests</h1>
-        <p className="text-slate-600">Mentee move requests and temporary cross-clan support.</p>
+        <p className="text-slate-600">Mentee move requests, temporary cross-clan support, and standing clan requests (also actionable from the notification bell).</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-0 border-b border-slate-200">
