@@ -21,7 +21,7 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { orgRoadmapApi } from '@/lib/services/roadmap-api';
 import { programsApi } from '@/lib/services/program-api';
 import { getTierButtonColor, getTierIconColor } from '@/lib/utils/certificates';
-import { MenteeEvidenceDrawer, CertificateReviewDrawer, AIEvaluationBanner, CriteriaTable, RecipientRosterTable, VerificationBanner, RosterFilterBar, type CertificateReviewMode } from '@/components/certificates/shared';
+import { MenteeEvidenceDrawer, AIEvaluationBanner, CriteriaTable, RecipientRosterTable, VerificationBanner, RosterFilterBar, type CertificateReviewMode } from '@/components/certificates/shared';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import CertificateHistoryLog from './CertificateHistoryLog';
 import {
@@ -95,7 +95,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   const [expandedAIRows, setExpandedAIRows] = useState<Set<string>>(new Set());
 
   const {
-    aiResults, setAiResults, aiRanAt, setAiRanAt, runningAI, failedCount,
+    aiResults, setAiResults, aiRanAt, setAiRanAt, runningAI, failedCount, skippedCount,
     aiProgressCount, aiTotalCount, aiEvalMap, runAIEvaluation
   } = useAIEvaluationProgress({
     templateId,
@@ -132,21 +132,24 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   const [reviewRows, setReviewRows] = useState<Record<string, CertificateVerification>>({});
   const [clanStates, setClanStates] = useState<ReviewerClanState[]>([]);
   const [reviewLoadError, setReviewLoadError] = useState<string | null>(null);
-  const [reviewDrawer, setReviewDrawer] = useState<{
-    clanId: string | null;
-    clanName: string;
-    mode: CertificateReviewMode;
-  } | null>(null);
-  const reviewDrawerRows = useMemo(() => {
-    if (!reviewDrawer) return [];
-    return Object.values(reviewRows).filter((row) => {
-      if ((row.clanId ?? null) !== reviewDrawer.clanId) return false;
-      if (reviewDrawer.mode === 'changed') return row.overridden;
-      if (reviewDrawer.mode === 'pending') return row.status === 'pending';
-      return true;
-    });
-  }, [reviewDrawer, reviewRows]);
   const inspectedIndex = inspectionQueue.indexOf(inspectedRecipient?.mentee_id);
+
+  const openReviewQueue = useCallback((clanId: string | null, _clanName: string, mode: CertificateReviewMode) => {
+    const rows = Object.values(reviewRows)
+      .filter((row) => (row.clanId ?? null) === clanId)
+      .filter((row) => mode === 'changed' ? (row.overridden || row.hasChangeRequest) : mode === 'pending' ? row.status === 'pending' : true)
+      .sort((a, b) => {
+        const rank = (row: CertificateVerification) => row.hasChangeRequest ? 0 : row.status === 'pending' ? 1 : row.stage === 'mentor_verified' ? 2 : 3;
+        return rank(a) - rank(b);
+      });
+    if (!rows.length) {
+      toast.info('There are no matching certificate claims to review.');
+      return;
+    }
+    const queue = rows.map((row) => row.menteeId);
+    setInspectionQueue(queue);
+    setInspectedRecipient({ mentee_id: queue[0] });
+  }, [reviewRows]);
 
   const {
     recipientSearch, setRecipientSearch,
@@ -331,7 +334,8 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
               minOnTimeRate:     c.minOnTimeRate ?? null,
               minAvgRating:      c.minAvgRating ?? null,
               minAttendanceRate: c.minAttendanceRate ?? null,
-              customRule:        c.customRule ?? ''
+              customRule:        c.customRule ?? '',
+              reviewChecklist:   Array.isArray(c.reviewChecklist) ? c.reviewChecklist : []
             }));
             loaded.sort((a: any, b: any) => (a.priority ?? Infinity) - (b.priority ?? Infinity));
             setCriteria(loaded);
@@ -804,7 +808,28 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   };
 
   const handleRunAIEvaluation = () => {
-    if (templateId) runAIEvaluation(templateId);
+    if (!templateId) return;
+    if (!criteria.length) {
+      toast.error('Add at least one certificate type and its criteria before evaluating.');
+      return;
+    }
+    setIsRulesDrawerOpen(true);
+  };
+
+  const startAIEvaluationFromRules = async () => {
+    if (!templateId) return;
+    try {
+      // The evaluator must use exactly what the admin is looking at. Persist
+      // any in-editor criteria changes first so it cannot grade against an old
+      // custom rule still stored on the template.
+      const committed = commitActiveTier(criteria);
+      await certificatesApi.updateTemplate(templateId, { criteria: committed });
+      setCriteria(committed);
+      setIsRulesDrawerOpen(false);
+      await runAIEvaluation(templateId);
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error, 'Could not save the criteria and start evaluation'));
+    }
   };
 
   /**
@@ -1580,7 +1605,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
             onIssueAnyway={() => {
               document.getElementById('certificate-recipients')?.scrollIntoView({ behavior: 'smooth' });
             }}
-            onViewClan={(clanId, clanName, mode) => setReviewDrawer({ clanId, clanName, mode })}
+            onViewClan={openReviewQueue}
           />
         )}
 
@@ -1594,6 +1619,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
 
             <AIEvaluationBanner
                   failedCount={failedCount}
+              skippedCount={skippedCount}
               count={aiResults.length}
               ranAt={aiRanAt}
               runningAI={runningAI}
@@ -1619,21 +1645,6 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                   ? () => setInspectedRecipient({ mentee_id: inspectionQueue[inspectedIndex + 1] })
                   : undefined,
               } : undefined}
-            />
-
-            <CertificateReviewDrawer
-              open={Boolean(reviewDrawer)}
-              clanId={reviewDrawer?.clanId ?? null}
-              clanName={reviewDrawer?.clanName ?? 'Review decisions'}
-              mode={reviewDrawer?.mode ?? 'all'}
-              rows={Object.values(reviewRows)}
-              tierName={getTierName}
-              onClose={() => setReviewDrawer(null)}
-              onInspect={(menteeId) => {
-                setInspectionQueue(reviewDrawerRows.map((row) => row.menteeId));
-                setReviewDrawer(null);
-                setInspectedRecipient({ mentee_id: menteeId });
-              }}
             />
 
             {}
@@ -1843,11 +1854,23 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
         title="Certificate Criteria & Rules"
         subtitle={`Requirements configured for the template: ${name || 'New Template'}`}
         width="md"
+        footer={templateId ? (
+          <button type="button" onClick={startAIEvaluationFromRules} disabled={runningAI || criteria.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+            {runningAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Evaluate unreviewed mentees
+          </button>
+        ) : undefined}
       >
         <div className="space-y-6">
           <p className="text-xs text-muted-foreground leading-relaxed">
             The rules below define the AI evaluation criteria for each tier. The AI uses these keywords and scoring thresholds to determine which certificate each mentee qualifies for.
           </p>
+
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs leading-relaxed text-foreground">
+            <p className="font-bold">Evaluation summary</p>
+            <p className="mt-1 text-muted-foreground">Types are checked from highest to lowest priority. Every hard threshold, required keyword, custom AI rule, and optional admin checklist item must pass. Qualitative checks require proof from completed work, approved submission details, or mentor feedback.</p>
+            <p className="mt-2 font-medium text-violet-700 dark:text-violet-300">Human decisions are protected: signed-off, admin-approved, and already-issued certificates are skipped.</p>
+          </div>
 
           <div className="space-y-4">
             {criteria.map((c: any) => {
@@ -1860,6 +1883,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
               const minOnTime = c.minOnTimeRate ?? 0;
               const minRating = c.minAvgRating ?? 0;
               const customRule = c.customRule?.trim() ?? '';
+              const reviewChecklist: string[] = c.reviewChecklist || [];
 
               return (
                 <div key={c.id} className="p-4 rounded-2xl border border-border bg-card shadow-2xs space-y-3">
@@ -1869,7 +1893,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                   </div>
 
                   <div className="space-y-3">
-                    {isParticipation && kws.length === 0 && minScore === 0 ? (
+                    {isParticipation && kws.length === 0 && minScore === 0 && reviewChecklist.length === 0 ? (
                       <p className="text-xs text-muted-foreground font-semibold italic">
                         Awarded to all active participants (no minimum requirements).
                       </p>
@@ -1921,6 +1945,14 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                           <div className="space-y-1">
                             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Custom AI Rule</p>
                             <p className="text-[11px] text-foreground italic bg-muted/30 rounded-xl px-3 py-2 leading-relaxed">"{customRule}"</p>
+                          </div>
+                        )}
+                        {reviewChecklist.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Mentor &amp; AI checklist</p>
+                            <div className="space-y-1">
+                              {reviewChecklist.map((item) => <p key={item} className="rounded-lg bg-muted/30 px-3 py-2 text-[11px] text-foreground">✓ {item}</p>)}
+                            </div>
                           </div>
                         )}
                       </>

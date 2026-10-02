@@ -2,6 +2,7 @@
 
 import { mentorApi } from '@/lib/services/mentor-api';
 import { qk, useApiQuery } from '@/lib/query';
+import { useClan } from '@/lib/context/ClanContext';
 
 export type PromotionStage = 'nominated' | 'interview' | 'approved' | 'promoted' | 'rejected';
 
@@ -39,8 +40,9 @@ export interface UseMentorPromotionsReturn {
 const EMPTY: PromotionCandidate[] = [];
 
 export function useMentorPromotions(): UseMentorPromotionsReturn {
+  const { activeClanId } = useClan();
   const { data, loading, error, refetch } = useApiQuery<PromotionCandidate[]>({
-    queryKey: qk.mentor.promotions,
+    queryKey: [...qk.mentor.promotions, activeClanId],
     queryFn: async () => (await mentorApi.listPromotions())?.data?.candidates ?? [],
     errorMessage: 'Failed to load promotion candidates',
   });

@@ -126,10 +126,17 @@ const resendAllTemplateCertificates = catchAsync(async (req, res) => {
 const runAIEvaluation = catchAsync(async (req, res) => {
   const result = await certificateService.runAIEvaluation(req.params.id, req.query.mentorId, req.user, { clanId: portalOf(req).clanId });
   if (result.total === 0) {
-    return res.status(200).json(successResponse('No active mentees found in this program.', [], 200));
+    const skipped = result.skipped?.total || 0;
+    return res.status(200).json(successResponse(
+      skipped
+        ? `Nothing to evaluate. ${skipped} mentee(s) were skipped because their certificate was reviewed, approved, or issued.`
+        : 'No active mentees found in this program.',
+      result,
+      200
+    ));
   }
   res.status(202).json(successResponse(
-    `Queued ${result.total} mentee evaluations. Results will arrive via real-time updates.`,
+    `Queued ${result.total} mentee evaluations${result.skipped?.total ? `; skipped ${result.skipped.total} finalized mentee(s)` : ''}. Results will arrive via real-time updates.`,
     result,
     202
   ));
@@ -153,7 +160,7 @@ const listVerifications = catchAsync(async (req, res) => {
 const verifyOne = catchAsync(async (req, res) => {
   const row = await certificateVerificationService.verify(
     req.params.id, req.params.menteeId,
-    { decision: req.body.decision, finalTier: req.body.finalTier, reason: req.body.reason },
+    { decision: req.body.decision, finalTier: req.body.finalTier, reason: req.body.reason, criteriaChecks: req.body.criteriaChecks },
     req.user
   );
   res.status(200).json(successResponse('Grade verified', { verification: row }));
@@ -225,6 +232,71 @@ const revokeUnreviewed = catchAsync(async (req, res) => {
   ));
 });
 
+// ── Questioning a mentor's grade ────────────────────────────────────────────
+
+const askMentor = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.askMentor(
+    req.params.id, req.params.menteeId, req.body?.question, req.user
+  );
+  res.status(201).json(successResponse('Question sent to the mentor', { question }));
+});
+
+const answerQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.answerQuestion(
+    req.params.questionId, req.body?.answer, req.user
+  );
+  res.status(200).json(successResponse('Answer sent', { question }));
+});
+
+const withdrawQuestion = catchAsync(async (req, res) => {
+  const question = await certificateVerificationService.withdrawQuestion(req.params.questionId, req.user);
+  res.status(200).json(successResponse('Question withdrawn', { question }));
+});
+
+const listQuestions = catchAsync(async (req, res) => {
+  const questions = await certificateVerificationService.listQuestions(req.params.id, {
+    menteeId: req.query.menteeId || null,
+    openOnly: String(req.query.openOnly || '') === 'true'
+  });
+  res.status(200).json(successResponse('Questions retrieved', { questions, count: questions.length }));
+});
+
+const notifyMentorsForMentee = catchAsync(async (req, res) => {
+  const result = await certificateVerificationService.notifyMentorsForMentee(
+    req.params.id, req.params.menteeId, { note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    `Notified ${result.notified} mentor(s) in ${result.clanName || 'the clan'}`, result
+  ));
+});
+
+/** The mentor's way forward once an admin has approved a grade. */
+const requestChange = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestChange(
+    req.params.id, req.params.menteeId,
+    { finalTier: req.body?.finalTier, decision: req.body?.decision, reason: req.body?.reason },
+    req.user
+  );
+  res.status(201).json(successResponse('Change request sent to the admins', { request }));
+});
+
+const resolveChangeRequest = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.resolveChangeRequest(
+    req.params.questionId, { approve: req.body?.approve === true, note: req.body?.note }, req.user
+  );
+  res.status(200).json(successResponse(
+    request.resolution === 'approved' ? 'Change approved and applied' : 'Change request declined',
+    { request }
+  ));
+});
+
+const requestReport = catchAsync(async (req, res) => {
+  const request = await certificateVerificationService.requestReport(
+    req.params.id, { clanId: req.body?.clanId, note: req.body?.note }, req.user
+  );
+  res.status(201).json(successResponse('Report requested from the admins', { request }));
+});
+
 module.exports = {
   createTemplate,
   listTemplates,
@@ -254,5 +326,13 @@ module.exports = {
   approveClan,
   revokeClanApproval,
   unreviewedIssued,
-  revokeUnreviewed
+  revokeUnreviewed,
+  askMentor,
+  answerQuestion,
+  withdrawQuestion,
+  listQuestions,
+  notifyMentorsForMentee,
+  requestChange,
+  resolveChangeRequest,
+  requestReport
 };

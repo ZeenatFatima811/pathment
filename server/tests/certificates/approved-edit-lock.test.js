@@ -2,7 +2,7 @@ jest.mock('../../src/db', () => ({ models: {
  CertificateTemplate: { findByPk: jest.fn() }, CertificateVerification: { findOne: jest.fn() },
  CertificateClanApproval: { findOne: jest.fn(), findAll: jest.fn(), destroy: jest.fn() }, CertificateInstance: { count: jest.fn(), findAll: jest.fn() },
 }, sequelize: { transaction: jest.fn(fn => fn({ LOCK: { UPDATE: 'UPDATE' } })) } }));
-jest.mock('../../src/services/authzService', () => ({ hasAdminAccess: jest.fn() }));
+jest.mock('../../src/services/authzService', () => ({ hasAdminAccess: jest.fn(), actsAsAdmin: jest.fn() }));
 const { models } = require('../../src/db');
 const authz = require('../../src/services/authzService');
 const service = require('../../src/services/certificateVerificationService');
@@ -14,17 +14,26 @@ beforeEach(() => {
  models.CertificateVerification.findOne.mockResolvedValue(row);
  models.CertificateClanApproval.findOne.mockResolvedValue({ approvedBy: 'admin' });
  models.CertificateInstance.count.mockResolvedValue(0);
+ authz.actsAsAdmin.mockResolvedValue(false);
  jest.spyOn(service, '_assertCanReview').mockResolvedValue();
  jest.spyOn(service, '_serialize').mockImplementation(value => value);
 });
 afterEach(() => jest.restoreAllMocks());
-test('approved mentor edits are rejected before saving', async () => {
+test('issued mentor edits are rejected before saving', async () => {
  authz.hasAdminAccess.mockResolvedValue(false);
- await expect(service.verify('template', 'mentee', { finalTier: 'gold', reason: 'Updated evidence' }, { id: 'mentor' }, { notify: false })).rejects.toThrow('Only an admin');
+ models.CertificateInstance.count.mockResolvedValue(1);
+ await expect(service.verify('template', 'mentee', { finalTier: 'gold', reason: 'Updated evidence' }, { id: 'mentor' }, { notify: false })).rejects.toThrow('Request a revoke and change');
  expect(row.save).not.toHaveBeenCalled();
 });
-test('admin may edit without releasing the mentor lock', async () => {
+test('admin approval locks a mentor edit before issuance', async () => {
+ authz.hasAdminAccess.mockResolvedValue(false);
+ row.stage = 'admin_approved';
+ await expect(service.verify('template', 'mentee', { finalTier: 'gold', reason: 'Updated evidence' }, { id: 'mentor' }, { notify: false })).rejects.toThrow('Request a change');
+ expect(row.save).not.toHaveBeenCalled();
+});
+test('admin may edit before issuance', async () => {
  authz.hasAdminAccess.mockResolvedValue(true);
+ authz.actsAsAdmin.mockResolvedValue(true);
  await service.verify('template', 'mentee', { finalTier: 'gold', reason: 'Updated evidence' }, { id: 'admin' }, { notify: false });
  expect(row.finalTier).toBe('gold');
  expect(row.save).toHaveBeenCalled();

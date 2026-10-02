@@ -1,7 +1,7 @@
 /** Related tools share navigation while keeping existing deep links. */
 export const mentorWorkspaces = [
   { label: 'My mentees', tabs: [
-    { href: '/mentor/mentees', label: 'Mentees' },
+    { href: '/mentor/mentees', label: 'My mentees' },
     { href: '/mentor/clan-team', label: 'Clan team' },
   ] },
   { label: 'Curriculum', tabs: [

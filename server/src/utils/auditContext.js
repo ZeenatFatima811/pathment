@@ -44,6 +44,21 @@ const setRequestUser = (userId) => {
   if (ctx) ctx.userId = userId;
 };
 
+/**
+ * Which portal the caller has open, for code that only receives `user`.
+ *
+ * The portal can only ever NARROW what somebody sees. A person who is both an
+ * admin and a mentor, working in the MENTOR portal, must be treated as a mentor
+ * — otherwise every "am I an admin?" check answers yes and the mentor screens
+ * answer with the whole organisation. That is exactly what happened: the mentor
+ * certificate roster listed all 28 clans and 622 mentees for a mentor whose
+ * sidebar said Viral Loop.
+ */
+const setRequestPortal = (role) => {
+  const ctx = store.getStore();
+  if (ctx) ctx.portalRole = role || null;
+};
+
 /** Bind every downstream query/audit/job spawned by this request to a workspace. */
 const setRequestOrganization = (organizationId, organizationSlug = null) => {
   const ctx = store.getStore();
@@ -76,4 +91,4 @@ async function createAuditLog(data) {
   }
 }
 
-module.exports = { runWithRequestContext, setDefaultRequestContext, getRequestContext, setRequestUser, setRequestOrganization, createAuditLog };
+module.exports = { runWithRequestContext, setDefaultRequestContext, getRequestContext, setRequestUser, setRequestPortal, setRequestOrganization, createAuditLog };

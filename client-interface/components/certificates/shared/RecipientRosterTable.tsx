@@ -3,7 +3,7 @@
 import { reviewStage } from '@/lib/utils/certificate-review-stage';
 import { NO_CERTIFICATE, INACTIVE, reviewSelection, aiSelection, type CertificateDecision } from '@/lib/utils/certificate-decision';
 import React from 'react';
-import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock } from 'lucide-react';
+import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock, MessageCircleQuestion } from 'lucide-react';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
 import { TierCriteria } from '@/components/admin/certificates/certificate-constants';
 
@@ -25,6 +25,12 @@ export interface RosterReviewState {
   overrideReason: string | null;
   verifiedBy: string | null;
   verifiedAt?: string | null;
+  /** How far the review got — a mentor's check or an admin's approval. */
+  stage?: string | null;
+  /** An admin has queried this grade and the mentor has not answered yet. */
+  hasOpenQuestion?: boolean;
+  /** A mentor has asked an admin to change this approved grade. */
+  hasChangeRequest?: boolean;
 }
 
 export interface RecipientRosterTableProps {
@@ -230,7 +236,7 @@ export function RecipientRosterTable({
                     ? <Lock className="absolute right-2.5 w-3 h-3 pointer-events-none text-muted-foreground/60" />
                     : <ChevronDown className="absolute right-2.5 w-3 h-3 pointer-events-none text-muted-foreground/60" />}
                 </div>
-                {isRecipientLocked?.(m.id) && <span className="mt-1 text-[10px] text-brand-700">Admin approved · editing locked</span>}
+                {isRecipientLocked?.(m.id) && <span className="mt-1 text-[10px] text-brand-700">Admin approved · request a change</span>}
                 <ReviewNote
                   review={reviewRows?.[m.id]}
                   aiTier={aiSelection(recommendation) || null}
@@ -301,6 +307,25 @@ function ReviewNote({
       return (
         <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
           <Edit3 className="w-2.5 h-2.5" /> Changed — verify to save
+        </span>
+      );
+    }
+    if (review.hasChangeRequest) {
+      // The grade stands; a mentor has asked an admin to move it.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · change requested
+        </span>
+      );
+    }
+    if (review.hasOpenQuestion) {
+      // The grade stands; what is outstanding is the mentor's explanation. Said
+      // on the row so an admin can see at a glance which ones they have queried.
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+          <MessageCircleQuestion className="w-2.5 h-2.5" />
+          {reviewStage(review).label} · question sent
         </span>
       );
     }

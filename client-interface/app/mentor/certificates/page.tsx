@@ -8,7 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   Loader2, Award, Calendar, ArrowLeft, Users, Send, Eye, CheckCircle2, XCircle, AlertCircle,
   TrendingUp, Download, Linkedin, ShieldCheck, X, Info,
-  Sparkles, Edit3, Clock, Lock
+  Sparkles, Edit3, Clock, Lock, FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/context/AuthContext';
@@ -21,6 +21,7 @@ import { Drawer } from '@/components/shared/Drawer';
 import { MenteeEvidenceDrawer, RecipientRosterTable, CertificatePreview, RosterFilterBar, type CertificateRenderData, type ReviewFilter, type RosterSort } from '@/components/certificates/shared';
 import { scopeCertificateReviews } from '@/lib/utils/certificate-review-scope';
 import { downloadCertificateAsPng } from '@/lib/utils/certificate-renderer';
+import { CertificateTemplateCover, CertificateTemplateGallery } from '@/components/certificates/shared/CertificateTemplateCover';
 
 
 
@@ -98,6 +99,7 @@ export default function MentorCertificatesPage() {
   const [search, setSearch] = useState('');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [clanFilter, setClanFilter] = useState('all');
+  const [requestingReport, setRequestingReport] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
   const [sortBy, setSortBy] = useState<RosterSort>('none');
   const [personalNote, setPersonalNote] = useState('');
@@ -153,11 +155,7 @@ export default function MentorCertificatesPage() {
     isOpen: boolean;
     duplicates: Array<{ id: string; name: string; email: string; tier: string }>;
     allSelectedRecipients: Array<{ menteeId: string; tier: string }>;
-  }>({
-    isOpen: false,
-    duplicates: [],
-    allSelectedRecipients: []
-  });
+  }>({ isOpen: false, duplicates: [], allSelectedRecipients: [] });
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -472,6 +470,8 @@ export default function MentorCertificatesPage() {
           // Stage, not status: 'verified' cannot tell these two apart.
           case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
           case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
+          case 'questioned':      return Boolean(row?.hasOpenQuestion);
+          case 'change_requested': return Boolean(row?.hasChangeRequest);
           case 'changed':  return Boolean(row?.overridden);
           // Sendable needs BOTH: the admin has released the clan, and this
           // person's own grade is signed off. The clan alone was not enough —
@@ -600,11 +600,11 @@ export default function MentorCertificatesPage() {
   };
 
   const isApprovedRecipient = (id: string) => {
-    const clanId = reviewRows?.[id]?.clanId || activeMentees.find(m => m.id === id)?.clanId;
-    return Boolean(clanId && (release ?? []).some(c => c.clanId === clanId && c.approved));
+    const recipient = activeMentees.find(m => m.id === id);
+    return reviewStage(reviewRows?.[id] ?? {}).stage === 'admin_approved' || Boolean(recipient?.issuedTiers?.length);
   };
   const handleTierChange = (menteeId: string, value: string) => {
-    if (isApprovedRecipient(menteeId)) { toast.error('Admin approved — only an admin can change this decision.'); return; }
+    if (isApprovedRecipient(menteeId)) { toast.error('This certificate was approved. Open its details to request a change.'); return; }
     setMentorTiers(prev => ({ ...prev, [menteeId]: value }));
 
     const mentee = activeMentees.find(m => m.id === menteeId);
@@ -722,34 +722,21 @@ export default function MentorCertificatesPage() {
     try {
       setIssuing(true);
       const res = await certificatesApi.issueCertificates({
-        templateId: activeTemplateId!,
-        recipients: recipientsList,
-        mentorId: user?.id
+        templateId: activeTemplateId!, recipients: recipientsList, mentorId: user?.id
       });
       if (res.success) {
-        // Report what the server actually did. Some of the selection may
-        // already hold this certificate — those are skipped, not sent — and
-        // claiming "queued 20" when 18 were duplicates is a lie the mentor
-        // only discovers by counting.
         const issued = res.data?.count ?? recipientsList.length;
         const skipped = res.data?.skipped ?? 0;
         const excluded = res.data?.skippedNoCertificate ?? 0;
-        if (issued === 0 && !excluded) {
-          toast.info(`Everyone selected already has this certificate.`);
-        } else {
-          toast.success(
-            skipped > 0
-              ? `Sent ${issued} certificate(s) — ${excluded} no certificate, ${skipped - excluded} already issued`
-              : `Sent ${issued} certificate(s)`
-          );
-        }
+        if (issued === 0 && !excluded) toast.info('Everyone selected already has this certificate.');
+        else toast.success(skipped > 0
+          ? `Sent ${issued} certificate(s) — ${excluded} no certificate, ${skipped - excluded} already issued`
+          : `Sent ${issued} certificate(s)`);
         setSelectedIds(new Set());
         setRefreshKey(prev => prev + 1);
         loadReview();
       }
     } catch (err) {
-      // The server's own words matter here: a refusal explains that the clan
-      // has not been approved yet, which a generic message would throw away.
       toast.error(extractApiErrorMessage(err, 'Failed to issue certificates'));
     } finally {
       setIssuing(false);
@@ -761,47 +748,32 @@ export default function MentorCertificatesPage() {
       toast.error('Select at least one mentee');
       return;
     }
-
-    const recipients = Array.from(selectedIds).map(id => ({
-      menteeId: id,
-      tier: getEffectiveTier(id)
-    }));
-
+    const recipients = Array.from(selectedIds).map(id => ({ menteeId: id, tier: getEffectiveTier(id) }));
     if (recipients.some(recipient => !recipient.tier)) {
       toast.error('Choose a certificate for every selected mentee before issuing.');
       return;
     }
-
     if (recipients.some(r => (r.tier === NO_CERTIFICATE || r.tier === INACTIVE) && !['no_certificate', 'inactive'].includes(reviewRows?.[r.menteeId]?.decision || ''))) {
       toast.error('Verify your No certificate / Inactive decisions before issuing.');
       return;
     }
     const excludedCount = recipients.filter(r => ['no_certificate', 'inactive'].includes(reviewRows?.[r.menteeId]?.decision || '')).length;
-    if (excludedCount && !(await confirm({ title: 'Exclude recipients without a certificate?', description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.` }))) return;
-    const duplicateInstances = recipients.filter(r => {
-      const m = activeMentees.find(item => item.id === r.menteeId);
-      return m && m.issuedTiers && m.issuedTiers.includes(r.tier);
+    if (excludedCount && !(await confirm({
+      title: 'Exclude recipients without a certificate?',
+      description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.`
+    }))) return;
+
+    const duplicates = recipients.filter(r => {
+      const mentee = activeMentees.find(item => item.id === r.menteeId);
+      return mentee?.issuedTiers?.includes(r.tier);
     }).map(r => {
-      const m = activeMentees.find(item => item.id === r.menteeId);
-      return {
-        id: r.menteeId,
-        name: m ? `${m.firstName} ${m.lastName}` : 'Recipient',
-        email: m?.email ?? '',
-        tier: getTierName(r.tier)
-      };
+      const mentee = activeMentees.find(item => item.id === r.menteeId);
+      return { id: r.menteeId, name: mentee ? `${mentee.firstName} ${mentee.lastName}` : 'Recipient', email: mentee?.email ?? '', tier: getTierName(r.tier) };
     });
 
-    if (duplicateInstances.length > 0) {
-      setDuplicateWarnState({
-        isOpen: true,
-        duplicates: duplicateInstances,
-        allSelectedRecipients: recipients
-      });
-    } else {
-      await executeIssuance(recipients);
-    }
+    if (duplicates.length) setDuplicateWarnState({ isOpen: true, duplicates, allSelectedRecipients: recipients });
+    else await executeIssuance(recipients);
   };
-
 
   if (!activeTemplateId) {
     return (
@@ -960,15 +932,7 @@ export default function MentorCertificatesPage() {
                   key={t.id}
                   className="group bg-card border border-border hover:border-brand-500/30 rounded-2xl overflow-hidden shadow-2xs hover:shadow-sm transition-all flex flex-col"
                 >
-                  <div className="relative aspect-[1.414] bg-muted overflow-hidden border-b border-border">
-                    {t.bgImageUrl
-                      ? <img src={t.bgImageUrl} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" alt={t.name} />
-                      : <div className="w-full h-full flex items-center justify-center"><Award className="w-10 h-10 text-muted-foreground/30" /></div>
-                    }
-                    {t.logoUrl && (
-                      <img src={t.logoUrl} className="absolute top-3 right-3 w-7 h-7 rounded-full border border-white/60 bg-white object-contain shadow" alt="logo" />
-                    )}
-                  </div>
+                  <CertificateTemplateCover template={t} />
                   <div className="p-4 flex flex-col gap-3 flex-1">
                     <div>
                       <p className="text-sm font-bold text-foreground line-clamp-1">{t.name}</p>
@@ -1116,21 +1080,8 @@ export default function MentorCertificatesPage() {
       {}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-5 mb-6">
         {}
-        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Certificate Template</p>
-              <h3 className="text-sm font-bold text-foreground mt-0.5">{currentTemplate?.name || 'Certificate Template'}</h3>
-            </div>
-            {currentTemplate?.bgImageUrl && (
-              <span className="px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-600 text-[10px] font-bold">Active</span>
-            )}
-          </div>
-          {currentTemplate?.bgImageUrl && (
-            <div className="aspect-[2.4] rounded-2xl overflow-hidden border border-border/80 bg-muted/20">
-              <img src={currentTemplate.bgImageUrl} className="w-full h-full object-cover" alt="Preview" />
-            </div>
-          )}
+        <div className="md:col-span-7 bg-card border border-border/80 rounded-2xl p-5 shadow-2xs">
+          {currentTemplate ? <CertificateTemplateGallery template={currentTemplate} /> : null}
         </div>
 
         {}
@@ -1183,6 +1134,34 @@ export default function MentorCertificatesPage() {
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Review your mentees’ grades and sign off. Send certificates after admin approval.</p>
               </div>
+
+              {/* Reports are an admin surface; a mentor who wants one had no way
+                  to say so. This asks — the admin still sends it. */}
+              {activeTemplateId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!activeTemplateId) return;
+                    try {
+                      setRequestingReport(true);
+                      const res = await certificatesApi.requestCertificateReport(activeTemplateId, {
+                        clanId: clanFilter !== 'all' ? clanFilter : undefined,
+                      });
+                      toast.success(res.message || 'Report requested');
+                    } catch (err) {
+                      toast.error(extractApiErrorMessage(err, 'Could not request the report'));
+                    } finally {
+                      setRequestingReport(false);
+                    }
+                  }}
+                  disabled={requestingReport}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-bold text-foreground hover:border-brand-500/40 disabled:opacity-50"
+                  title="Ask an admin to send you the certificate report for your clan"
+                >
+                  {requestingReport ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                  Request report
+                </button>
+              )}
 
             </div>
 
@@ -1353,17 +1332,14 @@ export default function MentorCertificatesPage() {
                         : `Verify ${pendingDecisions.length} grade${pendingDecisions.length === 1 ? '' : 's'}`}
                     </button>
                   ) : canIssue ? (
-                    /* Sending is unlocked by the admin approving the clan, after
-                       its grades are verified. Showing the button regardless
-                       just produced a 403 — the mentor pressed it and got an
-                       error rather than an explanation. */
                     <button
+                      type="button"
                       onClick={handleIssue}
                       disabled={issuing || selectedIds.size === 0 || selectedSummary.counts[NO_CERTIFICATE] === selectedIds.size}
                       className="flex items-center gap-1.5 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed rounded-xl text-sm font-medium transition-all shadow-sm"
                     >
                       {issuing ? <Loader2 className="animate-spin w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                      Issue Certificates
+                      Send Certificates
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3.5 py-2.5">
@@ -1371,7 +1347,7 @@ export default function MentorCertificatesPage() {
                       <span className="text-[11px] font-semibold text-foreground">
                         {pendingReviewCount > 0
                           ? `${pendingReviewCount} grade${pendingReviewCount === 1 ? '' : 's'} still need your sign-off.`
-                          : 'Signed off — waiting for an admin to approve your clan.'}
+                          : 'Signed off — waiting for an admin to approve.'}
                       </span>
                     </div>
                   )}
@@ -1542,21 +1518,19 @@ export default function MentorCertificatesPage() {
         duplicates={duplicateWarnState.duplicates}
         onCancel={() => setDuplicateWarnState(prev => ({ ...prev, isOpen: false }))}
         onIssueAnyway={async () => {
-          const allSelected = duplicateWarnState.allSelectedRecipients;
+          const recipients = duplicateWarnState.allSelectedRecipients;
           setDuplicateWarnState(prev => ({ ...prev, isOpen: false }));
-          await executeIssuance(allSelected);
+          await executeIssuance(recipients);
         }}
         onSkipDuplicates={async () => {
-          const dupIds = new Set(duplicateWarnState.duplicates.map(d => d.id));
-          const cleanRecipients = duplicateWarnState.allSelectedRecipients.filter(r => !dupIds.has(r.menteeId));
+          const duplicateIds = new Set(duplicateWarnState.duplicates.map(item => item.id));
+          const recipients = duplicateWarnState.allSelectedRecipients.filter(item => !duplicateIds.has(item.menteeId));
           setDuplicateWarnState(prev => ({ ...prev, isOpen: false }));
-          if (cleanRecipients.length === 0) {
-            toast.info('No remaining recipients left after skipping duplicates.');
-            return;
-          }
-          await executeIssuance(cleanRecipients);
+          if (!recipients.length) toast.info('No remaining recipients left after skipping duplicates.');
+          else await executeIssuance(recipients);
         }}
       />
+
     </div>
   );
 }

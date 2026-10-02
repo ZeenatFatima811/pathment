@@ -62,12 +62,12 @@ describe('explicit No certificate decisions', () => {
     await decline();
     await verification.verify(template.id, peer.id, {}, mentor);
     await verification.approveClan(template.id, clan.id, {}, admin);
-    await expect(verification.verify(template.id, mentee.id, { decision: 'award', finalTier: 'silver', reason: 'Late work was reviewed and accepted.' }, mentor)).rejects.toThrow(/only an admin/i);
+    await expect(verification.verify(template.id, mentee.id, { decision: 'award', finalTier: 'silver', reason: 'Late work was reviewed and accepted.' }, mentor)).rejects.toThrow(/request a change/i);
     const updated = await verification.verify(template.id, mentee.id, { decision: 'award', finalTier: 'silver', reason: 'Late work was reviewed and accepted.' }, admin);
     expect(updated.decisionHistory).toHaveLength(2);
     expect(await models.CertificateClanApproval.count({ where: { templateId: template.id } })).toBe(1);
     expect((await issue(mentor)).count).toBe(2);
-    await expect(decline()).rejects.toThrow(/only an admin/i);
+    await expect(decline()).rejects.toThrow(/request a change/i);
     await verification.open(template.id, [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null, reasoning: reason }], { notify: false });
     expect((await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: mentee.id } })).decision).toBe('award');
   }));
@@ -138,6 +138,67 @@ describe('explicit No certificate decisions', () => {
     const [evaluation] = await service.parseBatchAIResponse(JSON.stringify([{ mentee_id: mentee.id, certificate_tier: null }]), criteria,
       [{ menteeId: mentee.id, menteePayload: payload }]);
     expect(evaluation.result).toMatchObject({ _failed: true, decision: 'undecided' });
+  }));
+
+  it('requires evidence before a passed custom rule can award its tier', inWorkspace(async () => {
+    const criteria = [{ id: 'silver', name: 'Silver', customRule: 'Delivered a reviewed final project' }];
+    const payload = { mentee_id: mentee.id, normalized_score: 80, completion_rate: 90, on_time_rate: 80, blockers: {} };
+    const [evaluation] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id,
+      certificate_tier: 'silver',
+      custom_rules_check: [{ tier_id: 'silver', rule: criteria[0].customRule, passed: true, evidence: '' }]
+    }]), criteria, [{ menteeId: mentee.id, menteePayload: payload }]);
+    expect(evaluation.result).toMatchObject({ decision: 'no_certificate', certificate_tier: null });
+    expect(evaluation.result.tier_checks[0]).toMatchObject({ custom_rule_passed: false });
+  }));
+
+  it('applies custom AI rules only to their own certificate tier', inWorkspace(async () => {
+    const criteria = [
+      { id: 'gold', name: 'Gold', priority: 2, customRule: 'Led the final project' },
+      { id: 'silver', name: 'Silver', priority: 1, customRule: 'Delivered a reviewed final project' }
+    ];
+    const payload = { mentee_id: mentee.id, normalized_score: 90, completion_rate: 95, on_time_rate: 90, blockers: {} };
+    const [evaluation] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id,
+      certificate_tier: 'silver',
+      custom_rules_check: [
+        { tier_id: 'gold', rule: criteria[0].customRule, passed: false, evidence: 'No leadership evidence.' },
+        { tier_id: 'silver', rule: criteria[1].customRule, passed: true, evidence: 'Approved final-project submission and mentor feedback.' }
+      ]
+    }]), criteria, [{ menteeId: mentee.id, menteePayload: payload }]);
+    expect(evaluation.result).toMatchObject({ decision: 'award', certificate_tier: 'silver' });
+  }));
+
+  it('requires direct AI evidence for every configured certificate checklist item', inWorkspace(async () => {
+    const criteria = [{ id: 'silver', name: 'Silver', reviewChecklist: ['Completed the multi-vendor project'] }];
+    const payload = { mentee_id: mentee.id, normalized_score: 90, completion_rate: 95, on_time_rate: 90, blockers: {} };
+    const batch = [{ menteeId: mentee.id, menteePayload: payload }];
+
+    const [missing] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id, certificate_tier: 'silver'
+    }]), criteria, batch);
+    expect(missing.result).toMatchObject({ _failed: true, decision: 'undecided' });
+
+    const [proven] = await service.parseBatchAIResponse(JSON.stringify([{
+      mentee_id: mentee.id,
+      certificate_tier: 'silver',
+      criteria_checks: [{ tier_id: 'silver', item: criteria[0].reviewChecklist[0], passed: true, evidence: 'Approved multi-vendor submission and mentor feedback.' }]
+    }]), criteria, batch);
+    expect(proven.result).toMatchObject({ decision: 'award', certificate_tier: 'silver' });
+    expect(proven.result.tier_checks[0]).toMatchObject({ checklist_passed: true });
+  }));
+
+  it('requires every configured mentor checklist item before sign-off', inWorkspace(async () => {
+    const originalCriteria = template.criteria;
+    const item = 'Completed the multi-vendor project';
+    try {
+      await template.update({ criteria: [{ id: 'silver', name: 'Silver', reviewChecklist: [item] }] });
+      await expect(verification.verify(template.id, mentee.id, {}, mentor)).rejects.toThrow(/confirm every checklist item/i);
+      const saved = await verification.verify(template.id, mentee.id, { criteriaChecks: [item] }, mentor);
+      expect(saved.criteriaChecks).toEqual([item]);
+    } finally {
+      await template.update({ criteria: originalCriteria });
+    }
   }));
 
   it('does not issue an AI No certificate recommendation before a review round exists', inWorkspace(async () => {

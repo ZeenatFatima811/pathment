@@ -85,6 +85,8 @@ module.exports = (sequelize, DataTypes) => {
     decisionHistory: { type: DataTypes.JSONB, field: 'decision_history', defaultValue: [], allowNull: false },
     overridden: { type: DataTypes.BOOLEAN, defaultValue: false },
     overrideReason: { type: DataTypes.TEXT, field: 'override_reason' },
+    /** Reviewer attestations for the selected tier's optional admin checklist. */
+    criteriaChecks: { type: DataTypes.JSONB, field: 'criteria_checks', defaultValue: [], allowNull: false },
     status: {
       type: DataTypes.STRING(20),
       defaultValue: 'pending',
@@ -127,11 +129,85 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
-  // 4. CertificateClanApproval — the admin releasing a clan for issuing.
+  /**
+   * CertificateReviewQuestion — the admin asking a mentor to explain a grade.
+   *
+   * An admin who disagrees with a mentor could only accept the grade or
+   * overrule it, and overruling discards both the mentor's judgement and the
+   * reason behind it. Often the mentor simply knows something the record does
+   * not. This puts the question on the record and the answer next to it.
+   *
+   * It is NOT a stage. The grade does not move while a question is open — a
+   * questioned row is still `mentor_verified`, and folding this into `stage`
+   * would mean answering had to guess which stage to restore.
+   */
+  const CertificateReviewQuestion = sequelize.define('CertificateReviewQuestion', {
+    id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+    organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
+    templateId: { type: DataTypes.UUID, allowNull: false, field: 'template_id' },
+    /** Null for a report request, which is about a clan rather than a person. */
+    menteeId: { type: DataTypes.UUID, field: 'mentee_id' },
+    clanId: { type: DataTypes.UUID, field: 'clan_id' },
+    /**
+     * Which way this thread runs.
+     *   question        admin → mentor   "why did you give this grade?"
+     *   change_request  mentor → admin   "may I change it, because…"
+     *   report_request  mentor → admin   "please send me the report"
+     */
+    kind: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'question',
+      allowNull: false,
+      validate: { isIn: [['question', 'change_request', 'report_request']] }
+    },
+    /** What a change request is asking for, so the admin can grant it in one press. */
+    requestedTier: { type: DataTypes.STRING(50), field: 'requested_tier' },
+    requestedDecision: {
+      type: DataTypes.STRING(20),
+      field: 'requested_decision',
+      validate: { isIn: [['award', 'no_certificate']] }
+    },
+    /** Which way the admin went. `answer` holds their note either way. */
+    resolution: {
+      type: DataTypes.STRING(20),
+      validate: { isIn: [['approved', 'declined']] }
+    },
+    askedBy: { type: DataTypes.UUID, allowNull: false, field: 'asked_by' },
+    askedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'asked_at' },
+    question: { type: DataTypes.TEXT, allowNull: false },
+    /** The mentor whose decision is in question — who is asked, and notified. */
+    addressedTo: { type: DataTypes.UUID, field: 'addressed_to' },
+    answeredBy: { type: DataTypes.UUID, field: 'answered_by' },
+    answeredAt: { type: DataTypes.DATE, field: 'answered_at' },
+    answer: { type: DataTypes.TEXT },
+    status: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'open',
+      allowNull: false,
+      validate: { isIn: [['open', 'answered', 'withdrawn']] }
+    }
+  }, { tableName: 'certificate_review_questions', underscored: true });
+
+  CertificateReviewQuestion.associate = function (models) {
+    if (models.CertificateTemplate) {
+      CertificateReviewQuestion.belongsTo(models.CertificateTemplate, { foreignKey: 'templateId', as: 'template' });
+    }
+    if (models.User) {
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'menteeId', as: 'mentee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'askedBy', as: 'asker' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'addressedTo', as: 'addressee' });
+      CertificateReviewQuestion.belongsTo(models.User, { foreignKey: 'answeredBy', as: 'answerer' });
+    }
+    if (models.Clan) {
+      CertificateReviewQuestion.belongsTo(models.Clan, { foreignKey: 'clanId', as: 'clan' });
+    }
+  };
+
+  // 4. CertificateClanApproval — the admin recording approval of a clan's review.
   //
   // Verified and approved are different facts. "My mentors have finished
-  // checking" is the mentors' statement; "these may now go out" is the
-  // admin's, and only the second one lets a mentor press send.
+  // checking" is the mentors' statement; approval is the admin's finalization
+  // milestone and lets the clan's mentors perform the separate send action.
   const CertificateClanApproval = sequelize.define('CertificateClanApproval', {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     organizationId: { type: DataTypes.UUID, allowNull: false, field: 'organization_id' },
@@ -158,5 +234,5 @@ module.exports = (sequelize, DataTypes) => {
     }
   };
 
-  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval];
+  return [CertificateTemplate, CertificateInstance, CertificateVerification, CertificateClanApproval, CertificateReviewQuestion];
 };

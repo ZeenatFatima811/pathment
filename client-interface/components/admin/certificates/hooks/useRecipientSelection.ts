@@ -140,6 +140,8 @@ export function useRecipientSelection({
           // Stage, not status: 'verified' cannot tell these two apart.
           case 'mentor_verified': return reviewStage(row ?? {}).stage === 'mentor_verified';
           case 'admin_approved':  return reviewStage(row ?? {}).stage === 'admin_approved';
+          case 'questioned':      return Boolean(row?.hasOpenQuestion);
+          case 'change_requested': return Boolean(row?.hasChangeRequest);
           case 'changed':  return Boolean(row?.overridden);
           // Sendable needs BOTH: the admin has released the clan, and this
           // person's own grade is signed off. It used to check only the clan,

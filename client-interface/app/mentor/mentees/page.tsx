@@ -143,7 +143,7 @@ function MentorMentees() {
           Manage inactive &amp; paused mentees
         </summary>
         <div className="mt-4">
-          <PausedMenteesPanel />
+          <PausedMenteesPanel key={activeClanId} />
         </div>
       </details>
 
