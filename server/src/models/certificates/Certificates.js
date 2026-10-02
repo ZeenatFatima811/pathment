@@ -79,7 +79,7 @@ module.exports = (sequelize, DataTypes) => {
     /** What will actually be issued. */
     finalTier: { type: DataTypes.STRING(50), field: 'final_tier' },
     decision: { type: DataTypes.STRING(20), defaultValue: 'undecided', allowNull: false,
-      validate: { isIn: [['award', 'no_certificate', 'inactive', 'undecided']] } },
+      validate: { isIn: [['award', 'no_certificate', 'undecided']] } },
     aiDecision: { type: DataTypes.STRING(20), field: 'ai_decision', defaultValue: 'undecided', allowNull: false,
       validate: { isIn: [['award', 'no_certificate', 'undecided']] } },
     decisionHistory: { type: DataTypes.JSONB, field: 'decision_history', defaultValue: [], allowNull: false },

@@ -1,6 +1,6 @@
 'use client';
 
-import { AWARDED_CERTIFICATES, NO_CERTIFICATE, INACTIVE } from '@/lib/utils/certificate-decision';
+import { AWARDED_CERTIFICATES, NO_CERTIFICATE } from '@/lib/utils/certificate-decision';
 import { Search, X } from 'lucide-react';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import type { ReviewerClanState } from '@/lib/services/certificates-api';
@@ -151,7 +151,6 @@ export function RosterFilterBar({
             { value: 'all', label: 'All decisions' },
             { value: AWARDED_CERTIFICATES, label: 'Certificate assigned' },
             { value: NO_CERTIFICATE, label: 'No certificate' },
-            { value: INACTIVE, label: 'Inactive (drop)' },
             { value: '', label: 'Not evaluated / unassigned' },
             ...criteria.map((c) => ({ value: c.id, label: c.name })),
           ]}

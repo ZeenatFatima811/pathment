@@ -6,15 +6,14 @@ const authz = require('./authzService');
 const ACTIVE = ['approved', 'pending_match', 'matched', 'active', 'pending_completion', 'level_completed', 'program_completed', 'dropped'];
 
 function outcomeFromEnrollment(enrollment, verification) {
-  if (enrollment.status === 'dropped' || verification?.decision === 'inactive') return 'dropped';
+  if (enrollment.status === 'dropped') return 'dropped';
   if (verification?.decision === 'award') return 'certified';
   if (verification?.decision === 'no_certificate') return 'completed_uncertified';
   return enrollment.status === 'program_completed' ? 'completed' : 'completed';
 }
 
-function enrollmentStatusAtClose(enrollment, verification) {
+function enrollmentStatusAtClose(enrollment) {
   if (enrollment.status === 'dropped') return 'dropped';
-  if (verification?.decision === 'inactive') return 'dropped';
   return 'program_completed';
 }
 
@@ -57,7 +56,7 @@ class ProgramLifecycleService {
     const withoutCertificate = [];
     for (const enrollment of enrollments) {
       const decisions = rows.filter(r => r.menteeId === enrollment.menteeId);
-      const settled = decisions.filter(r => r.status === 'verified' && ['award', 'no_certificate', 'inactive'].includes(r.decision));
+      const settled = decisions.filter(r => r.status === 'verified' && ['award', 'no_certificate'].includes(r.decision));
       if (!issuedMentees.has(enrollment.menteeId) && !settled.some(d => d.decision === 'award')) {
         withoutCertificate.push(enrollment.menteeId);
       }
@@ -114,7 +113,7 @@ class ProgramLifecycleService {
       await models.Clan.findAll({
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],
       });
-      const { enrollments, byMentee } = await this.decisions(programId, transaction);
+      const { enrollments } = await this.decisions(programId, transaction);
       const closedAt = new Date();
 
       const groups = new Map();
@@ -129,8 +128,7 @@ class ProgramLifecycleService {
           { programId, transaction, live: true },
         );
         for (const enrollment of group) {
-          const verification = byMentee.get(enrollment.menteeId);
-          const status = enrollmentStatusAtClose(enrollment, verification);
+          const status = enrollmentStatusAtClose(enrollment);
           const performance = scores.mentees.find(m => m.id === enrollment.menteeId);
           await enrollment.update({
             status,

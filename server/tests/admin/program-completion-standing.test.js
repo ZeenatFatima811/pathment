@@ -143,18 +143,6 @@ describe('formal completion and independent standing clans', () => {
     expect(frozenSessions).toBe(0);
   }));
 
-  it('classifies an explicit inactive decision as dropped even when the enrollment is still active', () => within(async () => {
-    await models.CertificateVerification.update({
-      decision: 'inactive', finalTier: null, status: 'verified', verifiedBy: mentor.id, verifiedAt: new Date(),
-      overrideReason: 'Stopped attending and did not respond',
-    }, { where: { templateId: template.id } });
-    await lifecycle.closeProgram(alpha.id, admin);
-    const results = await lifecycle.results(alpha.id, admin);
-    const row = results.snapshots.find(s => s.menteeId === sara.id);
-    expect(row.outcome).toBe('dropped');
-    expect((await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } })).status).toBe('dropped');
-  }));
-
   it('retains a recorded dropped outcome for enrollments already marked dropped', () => within(async () => {
     await models.Enrollment.update({ status: 'dropped', droppedAt: new Date() }, { where: { menteeId: sara.id, programId: alpha.id } });
     await models.CertificateVerification.update({ decision: 'no_certificate', finalTier: null, overrideReason: 'Inactive during the program' }, { where: { templateId: template.id } });

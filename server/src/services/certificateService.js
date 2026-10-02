@@ -284,7 +284,7 @@ class CertificateService {
       const aiEval = aiResultMap[m.id];
       // The dispatched assignment remains authoritative until explicitly reviewed.
       if (review) {
-        const tier = ['no_certificate', 'inactive'].includes(review.decision) ? null : (review.finalTier ?? review.aiTier);
+        const tier = review.decision === 'no_certificate' ? null : (review.finalTier ?? review.aiTier);
         return { ...m, assignedDecision: review.decision, assignedTier: tier, tierMatches: tier ? { [tier]: review.aiMatchScore ?? 0 } : {},
           criteriaMatch: review.aiMatchScore, issuedTiers: issuedMap[m.id] || [] };
       }

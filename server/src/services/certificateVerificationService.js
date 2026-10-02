@@ -245,9 +245,9 @@ class CertificateVerificationService {
       const actingAsAdmin = await authzService.actsAsAdmin(user);
       const aiDecision = row.aiDecision === 'no_certificate' ? 'no_certificate' : (row.aiTier ? 'award' : 'undecided');
       const nextDecision = decision ?? (finalTier ? 'award' : aiDecision);
-      if (!['award', 'no_certificate', 'inactive'].includes(nextDecision)) throw new ValidationError('Choose a certificate, No certificate, or Inactive before verifying.');
-      if ((nextDecision === 'no_certificate' || nextDecision === 'inactive') && finalTier) {
-        throw new ValidationError('No certificate and Inactive cannot have a certificate tier.');
+      if (!['award', 'no_certificate'].includes(nextDecision)) throw new ValidationError('Choose a certificate or No certificate before verifying.');
+      if (nextDecision === 'no_certificate' && finalTier) {
+        throw new ValidationError('No certificate cannot have a certificate tier.');
       }
       const tier = nextDecision === 'award' ? (finalTier ?? row.aiTier) : null;
       if (nextDecision === 'award') this._assertTierExists(template, tier);
@@ -266,12 +266,12 @@ class CertificateVerificationService {
         throw new ValidationError(`Confirm every checklist item for ${tierConfig?.name || tier}: ${missingChecks.join('; ')}`);
       }
       const overridden = nextDecision !== aiDecision || tier !== row.aiTier;
-      const previousDecision = ['no_certificate', 'inactive'].includes(row.decision) ? row.decision : (row.finalTier ? 'award' : 'undecided');
+      const previousDecision = row.decision === 'no_certificate' ? row.decision : (row.finalTier ? 'award' : 'undecided');
       const changed = previousDecision !== nextDecision || row.finalTier !== tier;
-      const reasonRequired = overridden || nextDecision === 'no_certificate' || nextDecision === 'inactive' || (row.status === 'verified' && changed);
+      const reasonRequired = overridden || nextDecision === 'no_certificate' || (row.status === 'verified' && changed);
       const explanation = String(reason || '').trim();
       if (reasonRequired && !explanation) {
-        throw new ValidationError('A reason is required: tell us why you are changing this grade or selecting No certificate / Inactive.');
+        throw new ValidationError('A reason is required: tell us why you are changing this grade or selecting No certificate.');
       }
       if (changed && row.stage === 'admin_approved' && !actingAsAdmin) {
         throw new ForbiddenError('This certificate has been approved. Request a change and an admin will decide.');
@@ -753,7 +753,7 @@ class CertificateVerificationService {
       // reviewed. An unreviewed mentee is absent here, and `blockedRecipients`
       // refuses them rather than the caller inventing a tier.
       if (row.status !== 'verified') continue;
-      if (row.decision === 'no_certificate' || row.decision === 'inactive') out.set(row.menteeId, null);
+      if (row.decision === 'no_certificate') out.set(row.menteeId, null);
       else if (row.finalTier) out.set(row.menteeId, row.finalTier);
     }
     return out;
