@@ -65,7 +65,6 @@ module.exports = (sequelize, DataTypes) => {
       field: 'end_date'
     },
     closedAt: { type: DataTypes.DATE, field: 'closed_at' },
-    currentClosureId: { type: DataTypes.UUID, field: 'current_closure_id' },
     maxEnrollments: {
       type: DataTypes.INTEGER,
       field: 'max_enrollments'

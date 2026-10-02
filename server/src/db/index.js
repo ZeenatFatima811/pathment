@@ -79,7 +79,6 @@ Object.keys(models).forEach(modelName => {
 });
 
 require('./organizationScope')(sequelize, models);
-require('./programLifecycleGuards')(sequelize, models);
 
 // Identity is global, but every newly created account must enter exactly one
 // workspace. Keeping this at the model boundary covers imports, tests and admin

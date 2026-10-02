@@ -47,7 +47,7 @@ class CommunitySpaceService {
   /** Active enrollments for a user (mentee side), with program + cohort. */
   async _myEnrollments(userId) {
     return models.Enrollment.findAll({
-      where: { menteeId: userId, [Op.or]: [{ status: { [Op.notIn]: ['rejected', 'dropped'] } }, { finalOutcome: 'dropped' }] },
+      where: { menteeId: userId, status: { [Op.notIn]: ['rejected', 'dropped'] } },
       include: [
         { model: models.Program, as: 'program', attributes: ['id', 'name'] },
         { model: models.Cohort, as: 'cohort', attributes: ['id', 'name', 'programId', 'status'] }

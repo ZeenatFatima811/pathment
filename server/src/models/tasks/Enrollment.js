@@ -35,8 +35,6 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 1,
       field: 'current_week'
     },
-    finalOutcome: { type: DataTypes.STRING(30), field: 'final_outcome', validate: { isIn: [['certified', 'completed_uncertified', 'dropped']] } },
-    finalTier: { type: DataTypes.STRING(50), field: 'final_tier' },
     tasksCompleted: {
       type: DataTypes.INTEGER,
       defaultValue: 0,

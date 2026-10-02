@@ -258,6 +258,7 @@ class TaskService {
       menteeId,
       mentorId,
       enrollmentId,
+      assignmentKind: taskClan?.kind === 'standing' ? 'standing' : 'cohort',
       clanId,
       status: 'assigned',
       dueDate: resolvedDueDate,

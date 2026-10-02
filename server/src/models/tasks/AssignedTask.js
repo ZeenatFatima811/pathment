@@ -26,6 +26,14 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'enrollment_id'
     },
+    // cohort = program enrollment work (enrollment_id required); standing = standing-clan work (enrollment optional).
+    assignmentKind: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: 'cohort',
+      field: 'assignment_kind',
+      validate: { isIn: [['cohort', 'standing']] }
+    },
     status: {
       type: DataTypes.STRING(20),
       defaultValue: 'assigned',

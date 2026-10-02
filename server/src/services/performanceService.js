@@ -218,14 +218,7 @@ class PerformanceService {
       programId = clan?.programId || programId;
     }
     const scope = { clanId, programId };
-    if (programId && !live) {
-      const program = await models.Program.findByPk(programId);
-      if (program?.closedAt && program.currentClosureId) {
-        const snapshots = await models.EnrollmentSnapshot.findAll({ where: { closureId: program.currentClosureId, menteeId: { [Op.in]: ids } } });
-        const included = snapshots.filter(s => !clanId || s.clanIds.includes(clanId));
-        return { weights: included[0]?.performance.weights || {}, disabled: [], mentees: included.map(s => ({ ...s.performance, rank: s.cohortRank, historical: true })), eligibility: ELIGIBILITY };
-      }
-    }
+    // Closed programs no longer use enrollment snapshots — always score live.
 
     const [
       { weights, disabled, disabledBy },

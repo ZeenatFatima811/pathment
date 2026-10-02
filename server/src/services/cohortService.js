@@ -457,7 +457,7 @@ class CohortService {
             as: 'enrollments',
             required: false,
             ...(scope.programId ? { where: { programId: scope.programId } } : {}),
-            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt', 'currentClosureId'] }]
+            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt'] }]
           }
         ]
       }),
@@ -526,17 +526,6 @@ class CohortService {
       scoped: Boolean(clanId),
       historical: {}
     };
-    if (!scope.standing && mentee.enrollments?.length) {
-      const closed = mentee.enrollments.map(e => e.program).filter(p => p?.closedAt && p.currentClosureId);
-      if (closed.length) {
-        const saved = await models.EnrollmentSnapshot.findAll({
-          where: { closureId: { [Op.in]: closed.map(p => p.currentClosureId) }, menteeId }
-        });
-        const enrollment = this.pickPrimaryEnrollment(mentee.enrollments);
-        const snapshot = saved.find(s => s.enrollmentId === enrollment?.id && (!clanId || (s.clanIds || []).includes(clanId)));
-        if (snapshot?.performance?.report) preloads.historical[menteeId] = snapshot.performance.report;
-      }
-    }
 
     const row = await this.buildMenteeRow(menteeId, preloads);
     if (!row) return null;
@@ -865,7 +854,7 @@ class CohortService {
             as: 'enrollments',
             required: false,
             ...(scope.programId ? { where: { programId: scope.programId } } : {}),
-            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt', 'currentClosureId'] }]
+            include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'totalDurationWeeks', 'closedAt'] }]
           }
         ]
       }),
@@ -904,16 +893,7 @@ class CohortService {
       return acc;
     }, {});
 
-    const currentClosures = allUsers.flatMap(u => u.enrollments || []).map(e => e.program).filter(p => p?.closedAt && p.currentClosureId).map(p => p.currentClosureId);
     const historical = {};
-    if (currentClosures.length && !scope.standing) {
-      const saved = await models.EnrollmentSnapshot.findAll({ where: { closureId: { [Op.in]: [...new Set(currentClosures)] }, menteeId: inIds } });
-      for (const user of allUsers) {
-        const enrollment = this.pickPrimaryEnrollment(user.enrollments);
-        const snapshot = saved.find(s => s.enrollmentId === enrollment?.id && (!scope.clanId || (s.clanIds || []).includes(scope.clanId)));
-        if (snapshot?.performance?.report) historical[user.id] = snapshot.performance.report;
-      }
-    }
     return {
       historical,
       scoped: Boolean(scope.programId || scope.clanId || scope.standing),

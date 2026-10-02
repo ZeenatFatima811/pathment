@@ -557,12 +557,10 @@ class ProgramService {
       publishedAt: null,
       archivedAt: null,
       closedAt: null,
-      currentClosureId: null,
       createdAt: undefined,
       updatedAt: undefined,
       ...customizations,
-      closedAt: null,
-      currentClosureId: null
+      closedAt: null
     };
 
     const clonedProgram = await models.Program.create(clonedData);

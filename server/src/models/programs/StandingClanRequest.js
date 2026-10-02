@@ -11,7 +11,6 @@ module.exports = (sequelize, D) => {
     decisionNote: { type: D.TEXT, field: 'decision_note' },
     createdClanId: { type: D.UUID, field: 'created_clan_id' },
   }, { tableName: 'standing_clan_requests', underscored: true, indexes: [
-    { fields: ['status'] },
     { unique: true, fields: ['mentor_id', 'program_id'], where: { status: 'pending' }, name: 'standing_request_pending_unique' },
     { unique: true, fields: ['created_clan_id'] },
   ] });
