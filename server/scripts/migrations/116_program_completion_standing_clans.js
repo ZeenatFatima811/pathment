@@ -3,7 +3,8 @@ const sequelize = require('./_db');
 /**
  * Program closeout + standing clans (slim schema).
  * - Close marker: programs.closed_at only (no closure/snapshot history tables).
- * - Standing work: assigned_tasks.assignment_kind + nullable enrollment_id when standing.
+ * - Standing work: enrollment_id nullable on assigned_tasks (standing clans have no enrollment);
+ *   cohort vs standing is decided by clans.kind + application rules, not a denormalized column.
  * - Plan flag programCompletionStanding: paid plans only (standing requests).
  *   Program closeout itself stays available on every plan.
  */
@@ -15,17 +16,12 @@ async function up() {
       ALTER TABLE clans ADD COLUMN IF NOT EXISTS frozen_at TIMESTAMPTZ;
       ALTER TABLE programs ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;`);
 
-    // Standing vs cohort assignment: enrollment required for cohort, optional for standing.
-    await q(`ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS assignment_kind VARCHAR(20) NOT NULL DEFAULT 'cohort';
-      UPDATE assigned_tasks a SET assignment_kind = 'standing'
-        FROM clans c WHERE a.clan_id = c.id AND c.kind = 'standing' AND a.assignment_kind IS DISTINCT FROM 'standing';
-      ALTER TABLE assigned_tasks ALTER COLUMN enrollment_id DROP NOT NULL;
+    // Standing-clan tasks have no program enrollment; cohort tasks still carry enrollment_id.
+    // Drop assignment_kind if an earlier draft of this migration added it.
+    await q(`ALTER TABLE assigned_tasks DROP CONSTRAINT IF EXISTS assigned_tasks_assignment_kind_enrollment;
       ALTER TABLE assigned_tasks DROP CONSTRAINT IF EXISTS assigned_tasks_assignment_kind_check;
-      ALTER TABLE assigned_tasks ADD CONSTRAINT assigned_tasks_assignment_kind_check
-        CHECK (assignment_kind IN ('cohort', 'standing'));
-      ALTER TABLE assigned_tasks DROP CONSTRAINT IF EXISTS assigned_tasks_assignment_kind_enrollment;
-      ALTER TABLE assigned_tasks ADD CONSTRAINT assigned_tasks_assignment_kind_enrollment
-        CHECK (assignment_kind = 'standing' OR enrollment_id IS NOT NULL);`);
+      ALTER TABLE assigned_tasks DROP COLUMN IF EXISTS assignment_kind;
+      ALTER TABLE assigned_tasks ALTER COLUMN enrollment_id DROP NOT NULL;`);
 
     for (const table of ['blockers', 'delay_events']) {
       await q(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS clan_id UUID REFERENCES clans(id);

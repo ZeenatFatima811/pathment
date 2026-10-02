@@ -1,5 +1,5 @@
-const { Op } = require('sequelize');
-const { models } = require('../db');
+const { Op, literal } = require('sequelize');
+const { models, sequelize } = require('../db');
 const authzService = require('./authzService');
 const notificationOrchestrator = require('./notificationOrchestrator');
 const taskService = require('./taskService');
@@ -9,6 +9,7 @@ const dailyLogService = require('./dailyLogService');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { PERMISSIONS: P } = require('../config/permissions');
 const { NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
+const { requireWorkspaceId } = require('../utils/workspaceExecution');
 const logger = require('../utils/logger');
 
 /**
@@ -303,9 +304,9 @@ class CohortService {
 
       const allTasks = preloads.tasks[menteeId] || [];
       const enrollment = this.pickPrimaryEnrollment(mentee.enrollments);
-      // When preloads are already clan/program-scoped, keep every returned task
-      // (including standing work with no enrollment). Otherwise limit to the
-      // primary program enrollment so multi-program mentees do not blend.
+      // Preloads for cohort/program scope already exclude standing via taskFilterForScope.
+      // Standing-only scope returns standing tasks for activity views — not program scores.
+      // Unscoped + enrollment: keep only that enrollment's tasks (standing has null enrollment).
       tasks = preloads.scoped || !enrollment ? allTasks : allTasks.filter((t) => t.enrollmentId === enrollment.id);
 
       delays = preloads.delays[menteeId] || [];
@@ -826,14 +827,42 @@ class CohortService {
     return { clanId, programId: clan.programId || null };
   }
 
+  /**
+   * SQL fragment for assigned_tasks so cohort/program scores never mix standing work.
+   * Legacy clan_id NULL rows still count; standing clans are excluded.
+   */
+  taskSql({ programId = null, clanId = null } = {}, alias = '') {
+    const p = alias ? `${alias}.` : '';
+    const org = sequelize.escape(requireWorkspaceId());
+    return `${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
+    (${p}clan_id IS NULL OR ${p}clan_id IN (SELECT id FROM clans WHERE organization_id = ${org} AND kind = 'cohort'))
+    ${programId ? `AND ${p}enrollment_id IN (SELECT id FROM enrollments WHERE organization_id = ${org} AND program_id = ${sequelize.escape(programId)})` : ''}`;
+  }
+
+  taskWhere(scope = {}) {
+    return { [Op.and]: literal(this.taskSql(scope, '"AssignedTask"')) };
+  }
+
+  clanWhere({ programId = null, clanId = null } = {}) {
+    const org = sequelize.escape(requireWorkspaceId());
+    if (clanId) return { clanId };
+    return {
+      clanId: {
+        [Op.in]: literal(`(SELECT id FROM clans WHERE organization_id = ${org} AND kind = 'cohort'${
+          programId ? ` AND program_id = ${sequelize.escape(programId)}` : ''
+        })`),
+      },
+    };
+  }
+
   taskFilterForScope(scope = {}) {
     if (scope.standing) return { clanId: scope.clanId };
-    return require('./programWorkScope').taskWhere(scope);
+    return this.taskWhere(scope);
   }
 
   clanFilterForScope(scope = {}) {
     if (scope.standing) return { clanId: scope.clanId };
-    return require('./programWorkScope').clanWhere(scope);
+    return this.clanWhere(scope);
   }
 
   async preloadMenteeData(menteeIds, scope = {}) {

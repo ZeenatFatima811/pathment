@@ -3,7 +3,6 @@ const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const cohortService = require('./cohortService');
 const scoringSettingsService = require('./scoringSettingsService');
-const workScope = require('./programWorkScope');
 const { NotFoundError } = require('../utils/errors/errorTypes');
 const {
   DIFFICULTY_WEIGHT,
@@ -55,7 +54,7 @@ class PerformanceService {
         'attendance',
         [sequelize.fn('COUNT', sequelize.col('CohortReviewEntry.id')), 'n']
       ],
-      include: [{ model: models.CohortReviewSession, as: 'session', attributes: [], required: true, where: workScope.clanWhere(scope) }],
+      include: [{ model: models.CohortReviewSession, as: 'session', attributes: [], required: true, where: cohortService.clanWhere(scope) }],
       group: ['mentee_id', 'attendance'],
       raw: true
     });
@@ -84,7 +83,7 @@ class PerformanceService {
         WHERE organization_id = :organizationId AND mentee_id IN (:ids)
           AND status = 'completed'
           AND completed_at IS NOT NULL
-          AND ${workScope.taskSql(scope)}
+          AND ${cohortService.taskSql(scope)}
         GROUP BY mentee_id`,
       { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
     );
@@ -106,7 +105,7 @@ class PerformanceService {
          FROM assigned_tasks
         WHERE organization_id = :organizationId AND final_rating IS NOT NULL
           AND mentor_id IS NOT NULL
-          AND ${workScope.taskSql(scope)}
+          AND ${cohortService.taskSql(scope)}
         GROUP BY mentor_id`,
       { replacements: { organizationId: requireWorkspaceId() } }
     );
@@ -124,7 +123,7 @@ class PerformanceService {
       `SELECT DISTINCT ON (mentee_id) mentee_id, mentor_id
          FROM assigned_tasks
         WHERE organization_id = :organizationId AND mentee_id IN (:ids) AND mentor_id IS NOT NULL
-          AND ${workScope.taskSql(scope)}
+          AND ${cohortService.taskSql(scope)}
         ORDER BY mentee_id, updated_at DESC`,
       { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
     );
@@ -162,7 +161,7 @@ class PerformanceService {
          JOIN roadmap_tasks rt ON rt.id = a.roadmap_task_id
         WHERE a.organization_id = :organizationId AND rt.organization_id = :organizationId AND a.mentee_id IN (:ids)
           AND a.status = 'completed'
-          AND ${workScope.taskSql(scope, 'a')}
+          AND ${cohortService.taskSql(scope, 'a')}
         GROUP BY a.mentee_id`,
       { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
     );

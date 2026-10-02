@@ -737,7 +737,6 @@ class LinearRoadmapService {
       menteeId,
       mentorId,
       enrollmentId,
-      assignmentKind: enrollmentId ? 'cohort' : 'standing',
       clanId: clanId || null,
       status: 'assigned',
       assignedAt: new Date(),

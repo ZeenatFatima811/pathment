@@ -363,7 +363,7 @@ async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
 
   const taskWhere = {
     menteeId: { [Op.in]: menteeIds },
-    ...require('../services/programWorkScope').taskWhere(scope),
+    ...require('../services/cohortService').taskWhere(scope),
     status:   { [Op.ne]: 'cancelled' }
   };
   if (clanMentorIds !== null) {
@@ -419,7 +419,7 @@ async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
   }
 
   const blockers = await models.Blocker.findAll({
-    where: { menteeId: { [Op.in]: menteeIds }, ...require('../services/programWorkScope').clanWhere(scope) },
+    where: { menteeId: { [Op.in]: menteeIds }, ...require('../services/cohortService').clanWhere(scope) },
     attributes: ['menteeId', 'status', 'category', 'severity', 'openedAt', 'resolvedAt'],
     raw: true
   });

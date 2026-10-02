@@ -258,7 +258,6 @@ class TaskService {
       menteeId,
       mentorId,
       enrollmentId,
-      assignmentKind: taskClan?.kind === 'standing' ? 'standing' : 'cohort',
       clanId,
       status: 'assigned',
       dueDate: resolvedDueDate,
@@ -860,6 +859,8 @@ class TaskService {
     // custom heuristic undercounted tasks assigned from non-base/local roadmaps,
     // which falsely hit 100% and prematurely triggered completion).
     const assignedTasks = await models.AssignedTask.findAll({
+      // Standing-clan tasks never carry enrollment_id, so they cannot appear here.
+      // Keep this filter as enrollmentId only so existing cohort progress is unchanged.
       where: { enrollmentId },
       // Difficulty is needed to weight the bar. Without it, progress counts
       // rows, and a five minute task moves it as far as a week of work.
