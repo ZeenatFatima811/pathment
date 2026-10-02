@@ -4,6 +4,8 @@ const sequelize = require('./_db');
  * Program closeout + standing clans (slim schema).
  * - Close marker: programs.closed_at only (no closure/snapshot history tables).
  * - Standing work: assigned_tasks.assignment_kind + nullable enrollment_id when standing.
+ * - Plan flag programCompletionStanding: paid plans only (standing requests).
+ *   Program closeout itself stays available on every plan.
  */
 async function up() {
   await sequelize.transaction(async transaction => {
@@ -45,6 +47,15 @@ async function up() {
       UNIQUE(organization_id, created_clan_id)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS standing_request_pending_unique ON standing_clan_requests(organization_id, mentor_id, program_id) WHERE status='pending';`);
+
+    // Standing-clan requests: free/Starter → false; paid (Growth/Scale/etc.) → true.
+    await q(`UPDATE plans
+      SET features = COALESCE(features, '{}'::jsonb)
+        || jsonb_build_object(
+             'programCompletionStanding',
+             (COALESCE(monthly_price_cents, 0) > 0 OR COALESCE(annual_price_cents, 0) > 0)
+           ),
+          updated_at = NOW()`);
   });
 }
 
