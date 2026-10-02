@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { Archive, Layers } from 'lucide-react';
 import {
   useClan,
@@ -9,8 +8,11 @@ import {
 } from '@/lib/context/ClanContext';
 import { StandingClanRequestCta } from '@/components/shared/StandingClanRequestCta';
 
+/**
+ * Banner on existing mentor/mentee screens when the active clan is frozen
+ * (program closed) or standing — keeps the same pages, read-only elsewhere.
+ */
 export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
-  const pathname = usePathname();
   const { clans, activeClanId, menteeClans, menteeActiveClanId } = useClan();
   const clan =
     role === 'mentor'
@@ -19,30 +21,8 @@ export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
 
   if (!clan?.frozenAt && clan?.kind !== 'standing') return null;
 
-  // Dedicated completed homes already cover these routes when present.
-  if (
-    role === 'mentee' &&
-    clan.frozenAt &&
-    (pathname === '/mentee/dashboard' || pathname === '/mentee')
-  ) {
-    return null;
-  }
-
-  // Insights final-results views already tell the completed story (and host
-  // the standing-clan request) — skip the duplicate Archive banner there.
-  if (
-    role === 'mentor' &&
-    clan.frozenAt &&
-    (pathname === '/mentor/reports' ||
-      pathname === '/mentor/scores' ||
-      pathname === '/mentor/leaderboard')
-  ) {
-    return null;
-  }
-
   const standing = clan.kind === 'standing';
   const Icon = standing ? Layers : Archive;
-  const resultsHref = role === 'mentor' ? '/mentor/reports' : '/mentee/progress';
   const showStandingRequest =
     role === 'mentor' && !standing && Boolean(clan.frozenAt && clan.programId);
 
@@ -57,23 +37,16 @@ export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
             {clan.name}
             <span className="font-normal text-slate-500">
               {' '}
-              · {standing ? 'Standing clan' : 'Completed program history'}
+              · {standing ? 'Standing clan' : 'Program closed'}
             </span>
           </p>
           <p className="mt-1 text-slate-600">
             {standing ? (
-              <>
-                Ongoing mentoring with its own tasks and activity.{' '}
-                <Link className="font-medium text-brand-600 hover:text-brand-700" href={resultsHref}>
-                  View activity
-                </Link>
-              </>
+              <>Ongoing mentoring with its own tasks and activity.</>
             ) : (
               <>
-                Past work and feedback are read-only.{' '}
-                <Link className="font-medium text-brand-600 hover:text-brand-700" href={resultsHref}>
-                  View final results
-                </Link>
+                This clan is frozen — the same screens as before, with actions disabled.
+                Past work and feedback stay available to view.
               </>
             )}
           </p>
@@ -82,6 +55,15 @@ export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
 
       {showStandingRequest && clan.programId ? (
         <StandingClanRequestCta programId={clan.programId} programName={clan.name} />
+      ) : null}
+
+      {standing && role === 'mentee' ? (
+        <Link
+          href="/mentee/progress"
+          className="text-sm font-medium text-brand-600 hover:text-brand-700"
+        >
+          View activity
+        </Link>
       ) : null}
     </div>
   );

@@ -7,7 +7,6 @@ import {
   ClipboardCheck, Route, CalendarClock, Mail, GraduationCap, Lock, Globe,
 } from 'lucide-react';
 import { useMentorProgramDetail, type ProgramClanDetail, type ProgramPerson } from '@/lib/hooks/mentor';
-import { ProgramCompletionPanel } from '@/components/shared/ProgramCompletionPanel';
 
 const STATUS_CLASS: Record<string, string> = {
   published: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -123,7 +122,6 @@ export default function MentorProgramDetail() {
 
   return (
     <div className="space-y-6">
-      {program.status === 'completed' && <ProgramCompletionPanel programId={id} />}
       <Link href="/mentor/programs" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
         <ChevronLeft className="w-4 h-4" />Back to My Programs
       </Link>

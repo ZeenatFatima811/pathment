@@ -4,8 +4,7 @@ import { useMemo } from 'react';
 import Link from 'next/link';
 import { Award, Crown, Info, Loader2, Trophy } from 'lucide-react';
 import { useClanPerformance } from '@/lib/hooks/mentor';
-import { useClan, ALL_CLANS, resolveActiveMentorClan } from '@/lib/context/ClanContext';
-import { MentorFinalResults } from '@/components/mentor/MentorFinalResults';
+import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
 import type { RankedMentee, UnrankedMentee } from '@/lib/services/performance-api';
 
 /**
@@ -64,16 +63,7 @@ function Avatar({
 
 export default function MentorLeaderboard() {
   const { clans, activeClanId } = useClan();
-  const resolved = resolveActiveMentorClan(clans, activeClanId);
-  if (resolved?.frozenAt && resolved.programId) {
-    return (
-      <MentorFinalResults
-        programId={resolved.programId}
-        clanName={resolved.name}
-        variant="leaderboard"
-      />
-    );
-  }
+  // Frozen cohorts keep this same standings UI (banner via ClanWorkspaceNotice).
 
   // Scores only compare people who train together, so SOME clan must be chosen:
   // merging two clans into one ranking would compare mentees who were never in
