@@ -146,7 +146,15 @@ class StandingClanService {
   }
 
   async addMenteesToStandingClan(clanId, menteeIds, actor) {
-    await this.assertCanManage(clanId, actor);
+    const clan = await models.Clan.findByPk(clanId);
+    if (!clan) throw new NotFoundError('Clan not found');
+    if (clan.kind !== 'standing') throw new ValidationError('This operation is only for standing clans');
+    const resource = await authz.scopeOfClan(clanId);
+    // Match cohort addMember: lead (manage members) or co-mentor with mentee.add.
+    const canManage = await authz.can(actor, PERMISSIONS.CLAN_MANAGE_MEMBERS, resource);
+    const canAdd = await authz.can(actor, PERMISSIONS.MENTEE_ADD, resource);
+    if (!canManage && !canAdd) throw new ForbiddenError('You cannot manage this clan');
+
     if (!Array.isArray(menteeIds) || !menteeIds.length || menteeIds.length > 100) throw new ValidationError('Select between 1 and 100 mentees');
     return sequelize.transaction(async transaction => {
       const clan = await models.Clan.findByPk(clanId, { transaction, lock: transaction.LOCK.UPDATE });
