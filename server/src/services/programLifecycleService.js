@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { ForbiddenError, NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
+const { PERMISSIONS } = require('../config/permissions');
 const authz = require('./authzService');
 
 const ACTIVE = ['approved', 'pending_match', 'matched', 'active', 'pending_completion', 'level_completed', 'program_completed', 'dropped'];
@@ -20,7 +21,7 @@ function enrollmentStatusAtClose(enrollment) {
 class ProgramLifecycleService {
   async assertAdmin(actor, programId) {
     if (!await authz.hasAdminAccess(actor)) throw new ForbiddenError('Only an admin can close or reopen a program');
-    if (programId && !await authz.can(actor, require('../config/permissions').PERMISSIONS.PROGRAM_MANAGE, { programId })) {
+    if (programId && !await authz.can(actor, PERMISSIONS.PROGRAM_MANAGE, { programId })) {
       throw new ForbiddenError('You cannot manage this program');
     }
   }

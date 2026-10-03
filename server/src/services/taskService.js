@@ -125,9 +125,8 @@ class TaskService {
     const clanId = await resolveMenteeClanId(menteeId, requestedClanId, { actorId: mentorId });
     if (!clanId) throw new ValidationError('Mentee has no clan membership to attach this task to');
     const taskClan = await models.Clan.findByPk(clanId);
-    const authz = require('./authzService');
     const actor = await models.User.findByPk(mentorId);
-    if (!await authz.can(actor, require('../config/permissions').PERMISSIONS.TASK_ASSIGN, await authz.scopeOfClan(clanId))) throw new ForbiddenError('You cannot assign work in this clan');
+    if (!await authzService.can(actor, PERMISSIONS.TASK_ASSIGN, await authzService.scopeOfClan(clanId))) throw new ForbiddenError('You cannot assign work in this clan');
     if (taskClan?.kind === 'standing') {
       if (enrollmentId) throw new ValidationError('Standing clan tasks cannot use a program enrollment');
       enrollmentId = null;

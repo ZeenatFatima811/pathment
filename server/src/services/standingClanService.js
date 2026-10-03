@@ -1,15 +1,20 @@
 const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const authz = require('./authzService');
+const organizationService = require('./organizationService');
+const workspaceRecipients = require('./workspaceRecipients');
+const notificationOrchestrator = require('./notificationOrchestrator');
 const { PERMISSIONS } = require('../config/permissions');
+const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
+const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
 
-//  clanService requires this module at load time (module.exports = instance).
+// clanService requires this module at load time — keep lazy to avoid the cycle.
 const clans = () => require('./clanService');
 
 class StandingClanService {
   async assertStandingClanPlan(organizationId) {
-    await require('./organizationService').requireEntitlement(
+    await organizationService.requireEntitlement(
       organizationId,
       'programCompletionStanding',
       'Standing clan requests are available on Growth and Scale plans',
@@ -19,13 +24,13 @@ class StandingClanService {
   async eligiblePrograms(actor) {
     const clanIds = await authz.mentoredClanIds(actor.id);
     if (!clanIds.length) return [];
-    const clans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds }, kind: 'cohort' }, attributes: ['programId', 'organizationId'] });
-    if (!clans.length) return [];
-    const organizationId = clans[0].organizationId || require('../utils/auditContext').getRequestContext()?.organizationId;
-    if (organizationId && !(await require('./organizationService').entitlement(organizationId, 'programCompletionStanding'))) {
+    const mentoredClans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds }, kind: 'cohort' }, attributes: ['programId', 'organizationId'] });
+    if (!mentoredClans.length) return [];
+    const organizationId = mentoredClans[0].organizationId || getRequestContext()?.organizationId;
+    if (organizationId && !(await organizationService.entitlement(organizationId, 'programCompletionStanding'))) {
       return [];
     }
-    return models.Program.findAll({ where: { id: { [Op.in]: [...new Set(clans.map(c => c.programId))] }, status: 'completed', closedAt: { [Op.ne]: null } }, attributes: ['id', 'name', 'endDate'] });
+    return models.Program.findAll({ where: { id: { [Op.in]: [...new Set(mentoredClans.map(c => c.programId))] }, status: 'completed', closedAt: { [Op.ne]: null } }, attributes: ['id', 'name', 'endDate'] });
   }
 
   async request(input, actor) {
@@ -56,12 +61,12 @@ class StandingClanService {
 
   async _notifyAdminsOfRequest(request, mentor, program) {
     try {
-      const admins = await require('./workspaceRecipients').admins();
+      const admins = await workspaceRecipients.admins();
       if (!admins.length) return;
       const mentorName = [mentor.firstName, mentor.lastName].filter(Boolean).join(' ').trim() || 'A mentor';
       const programName = program?.name || 'a completed program';
-      await require('./notificationOrchestrator').dispatch({
-        eventKey: require('../config/notificationMatrix').NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_CREATED,
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_CREATED,
         recipients: admins.map(a => ({ userId: a.id })),
         payload: {
           title: 'Standing clan request',
@@ -117,8 +122,8 @@ class StandingClanService {
     const approved = request.status === 'approved';
     const note = request.decisionNote ? ` Note: ${request.decisionNote}` : '';
     try {
-      await require('./notificationOrchestrator').dispatch({
-        eventKey: require('../config/notificationMatrix').NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED,
+      await notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED,
         recipients: [{ userId: request.mentorId }],
         payload: {
           title: approved ? 'Standing clan approved' : 'Standing clan request rejected',

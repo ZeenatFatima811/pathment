@@ -1,6 +1,7 @@
 const { models } = require('../db');
 const authzService = require('./authzService');
 const { PERMISSIONS: P } = require('../config/permissions');
+const { resolveMenteeClanId } = require('./menteeClanScope');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
 
 // Grace window for a mentee to delete a friction record they logged. Long
@@ -17,7 +18,7 @@ class FrictionService {
   async clanFor(data, actorId) {
     const task = data.assignedTaskId && await models.AssignedTask.findByPk(data.assignedTaskId);
     if (data.assignedTaskId && (!task || task.menteeId !== data.menteeId || (data.clanId && task.clanId !== data.clanId))) throw new ValidationError('Choose a task belonging to this mentee and clan');
-    return require('./menteeClanScope').resolveMenteeClanId(data.menteeId, data.clanId || task?.clanId, { actorId });
+    return resolveMenteeClanId(data.menteeId, data.clanId || task?.clanId, { actorId });
   }
   /**
    * Throw unless `user` may touch this mentee's friction records. `canViewMentee`
