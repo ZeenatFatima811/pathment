@@ -8,6 +8,7 @@ const {
   ValidationError 
 } = require('../utils/errors/errorTypes');
 const notificationOrchestrator = require('./notificationOrchestrator');
+const organizationService = require('./organizationService');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 
 // Helper function for audit logging (non-blocking)
@@ -19,7 +20,6 @@ class ProgramService {
    * Create a new program
    */
   async createProgram(programData, createdBy) {
-    const organizationService = require('./organizationService');
     const organizationId = await organizationService.currentId();
     const {
       name,
