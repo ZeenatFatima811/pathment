@@ -6,6 +6,7 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { endOfDayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
+const mentorshipPauseService = require('./mentorshipPauseService');
 const { PERMISSIONS } = require('../config/permissions');
 const { pointsForDifficulty } = require('../config/points');
 const { toStringList, toBoolean } = require('../utils/multipartFields');
@@ -130,7 +131,7 @@ class SubmissionService {
     });
 
     // Re-engagement: a paused mentee who submits work has come back → resume.
-    require('./mentorshipPauseService').autoResumeIfPaused(task.menteeId, 'submitted work').catch(() => { });
+    mentorshipPauseService.autoResumeIfPaused(task.menteeId, 'submitted work', task.clanId).catch(() => { });
 
     // Assign the next roadmap step NOW (at submission), not at approval — so the
     // mentee has work to do while the mentor reviews. Within-roadmap only;

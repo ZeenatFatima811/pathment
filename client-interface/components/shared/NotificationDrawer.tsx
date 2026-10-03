@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -28,6 +28,14 @@ import {
 } from "@/lib/hooks/shared/useNotificationFeed";
 import { useClan, ALL_CLANS } from "@/lib/context/ClanContext";
 import { logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
+import { completionApi, type StandingRequest } from "@/lib/services/program-completion-api";
+import { useProgramCloseoutEnabled } from "@/lib/hooks/useProgramCloseoutEnabled";
+import {
+  StandingClanDecisionButtons,
+  StandingClanDecisionDrawer,
+  STANDING_CLAN_UPGRADE_COPY,
+  type StandingClanReview,
+} from "@/components/shared/StandingClanDecisionDrawer";
 
 interface Notification {
   id: string;
@@ -79,10 +87,13 @@ export default function NotificationDrawer({
   const pathname = logicalPathname(usePathname());
   const { activeRole } = useAuth();
   const { activeClanId, menteeActiveClanId } = useClan();
+  const closeoutEnabled = useProgramCloseoutEnabled();
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [showAllRoles, setShowAllRoles] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [pendingStanding, setPendingStanding] = useState<StandingRequest[]>([]);
+  const [standingReview, setStandingReview] = useState<StandingClanReview | null>(null);
   // The feed itself is shared: this bell renders twice (desktop sidebar + mobile
   // header) and both are always in the DOM, so owning the state here meant two
   // of every fetch and two sockets. See useNotificationFeed.
@@ -100,6 +111,7 @@ export default function NotificationDrawer({
   // theirs (they never receive the other role's notifications).
   const role: NotificationRole | null =
     (activeRole as NotificationRole) || roleFromPathname(pathname);
+  const isAdminDrawer = role === "admin";
   const roleScoped = useMemo(
     () => notifications.filter((n) => matchesRole(n.audience, role)),
     [notifications, role],
@@ -118,6 +130,20 @@ export default function NotificationDrawer({
   const visibleNotifications = scopedNotifications.filter(
     (notification) => filter === "all" || notification.status === "unread",
   );
+  // Pending standing requests already have Approve/Reject above the feed —
+  // hide matching notification rows so the admin does not see duplicates.
+  const pendingStandingIds = useMemo(
+    () => new Set(pendingStanding.map((row) => row.id)),
+    [pendingStanding],
+  );
+  const feedNotifications = visibleNotifications.filter(
+    (n) =>
+      !(
+        n.relatedEntityType === "standing_clan_request" &&
+        n.relatedEntityId &&
+        pendingStandingIds.has(n.relatedEntityId)
+      ),
+  );
   const unreadCount = useMemo(
     () => clanScoped.filter((item) => item.status === "unread").length,
     [clanScoped],
@@ -135,6 +161,26 @@ export default function NotificationDrawer({
     if (isOpen) reload();
   }, [isOpen, reload]);
 
+  const loadPendingStanding = useCallback(async () => {
+    if (!isAdminDrawer) {
+      setPendingStanding([]);
+      return;
+    }
+    try {
+      const rows = await completionApi.requests();
+      setPendingStanding(
+        (Array.isArray(rows) ? rows : []).filter((r) => r.status === "pending"),
+      );
+    } catch {
+      // Keep the notification feed usable even if standing requests fail to load.
+      setPendingStanding([]);
+    }
+  }, [isAdminDrawer]);
+
+  useEffect(() => {
+    if (isOpen && isAdminDrawer) void loadPendingStanding();
+  }, [isOpen, isAdminDrawer, loadPendingStanding]);
+
   // Lock background scroll while sheet is open.
   useEffect(() => {
     if (!isOpen) return;
@@ -151,7 +197,31 @@ export default function NotificationDrawer({
   const handleMarkAllRead = () => markAllRead();
   const handleDelete = (notificationId: string) => remove(notificationId);
 
+  const findStandingRequest = (id?: string | null) =>
+    pendingStanding.find((r) => r.id === id) || null;
+
+  const beginStandingReview = (
+    row: StandingRequest,
+    decision: "approved" | "rejected",
+    notificationId?: string,
+  ) => {
+    setStandingReview({ row, decision });
+    if (notificationId) handleMarkRead(notificationId);
+  };
+
   const handleNotificationClick = (notification: Notification) => {
+    // Admin standing-clan requests are decided in-drawer; don't bounce to the list page.
+    if (
+      isAdminDrawer &&
+      notification.relatedEntityType === "standing_clan_request" &&
+      notification.relatedEntityId
+    ) {
+      const row = findStandingRequest(notification.relatedEntityId);
+      if (row) {
+        beginStandingReview(row, "approved", notification.id);
+        return;
+      }
+    }
     if (notification.actionUrl) {
       router.push(workspacePath(notification.actionUrl));
       setIsOpen(false);
@@ -319,12 +389,43 @@ export default function NotificationDrawer({
                 ))}
               </div>
               <div className="flex-1 overflow-y-auto bg-muted/30 p-3">
+                {isAdminDrawer && pendingStanding.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    <p className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Standing clan requests
+                    </p>
+                    {pendingStanding.map((row) => (
+                      <div
+                        key={row.id}
+                        className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">{row.name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {row.program.name} · {row.mentor.firstName} {row.mentor.lastName}
+                            </p>
+                            {row.description && (
+                              <p className="mt-2 text-sm text-slate-600 line-clamp-2">{row.description}</p>
+                            )}
+                          </div>
+                          <StandingClanDecisionButtons
+                            row={row}
+                            disabled={!closeoutEnabled}
+                            title={!closeoutEnabled ? STANDING_CLAN_UPGRADE_COPY : undefined}
+                            onReview={setStandingReview}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {isLoading ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
                     <Clock className="w-6 h-6 animate-spin" />
                     <span>Loading notifications...</span>
                   </div>
-                ) : visibleNotifications.length === 0 ? (
+                ) : feedNotifications.length === 0 && pendingStanding.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2 px-6 text-center">
                     <Bell className="w-8 h-8 text-slate-300" />
                     <span>
@@ -344,9 +445,9 @@ export default function NotificationDrawer({
                       </button>
                     )}
                   </div>
-                ) : (
+                ) : feedNotifications.length === 0 ? null : (
                   <div className="space-y-3">
-                    {visibleNotifications.map((notification) => (
+                    {feedNotifications.map((notification) => (
                       <div
                         key={notification.id}
                         className={`group rounded-2xl border border-border px-4 py-4 cursor-pointer transition-colors ${
@@ -450,6 +551,15 @@ export default function NotificationDrawer({
                 </div>
               </div>
             </aside>
+            <StandingClanDecisionDrawer
+              review={standingReview}
+              zClass="z-[90]"
+              onClose={() => setStandingReview(null)}
+              onDecided={() => {
+                void loadPendingStanding();
+                reload();
+              }}
+            />
           </>,
           document.body,
         )}

@@ -27,6 +27,8 @@ import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
+import { useClan } from '@/lib/context/ClanContext';
+import { StandingClanActivity } from '@/components/shared/StandingClanActivity';
 
 function WhatsAppGroupCard({
   enrollment,
@@ -780,6 +782,10 @@ function MenteeDashboardInner() {
 }
 
 export default function MenteeDashboard() {
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const clan = menteeClans.find(c => c.id === menteeActiveClanId);
+  // Standing clans: lightweight home + activity. Frozen cohorts: same dashboard (ClanWorkspaceNotice + disabled actions).
+  if (clan?.kind === 'standing') return <div className="space-y-5"><div className="flex flex-wrap gap-3">{[['/mentee/tasks', 'Your tasks'], ['/mentee/daily-log', 'Daily log'], ['/mentee/blockers', 'Roadblocks'], ['/mentee/meetings', 'Meetings'], ['/mentee/community', 'Community']].map(([href, label]) => <Link key={href} href={href} className="rounded-lg border border-slate-200 bg-card px-4 py-2 text-sm font-medium text-brand-600">{label}</Link>)}</div><RecurringRitualsCard /><StandingClanActivity clanId={clan.id} /></div>;
   return (
     <Suspense
       fallback={

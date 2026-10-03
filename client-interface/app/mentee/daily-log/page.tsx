@@ -11,7 +11,7 @@ import {
   Sun,
 } from "lucide-react";
 import { useDailyLog, useMenteeTasks } from "@/lib/hooks/mentee";
-import { useClan } from "@/lib/context/ClanContext";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 import { scheduleApi, type ScheduleSlot } from "@/lib/services/schedule-api";
 
 function toKey(d: Date): string {
@@ -19,7 +19,11 @@ function toKey(d: Date): string {
 }
 
 export default function MenteeDailyLog() {
-  const { menteeActiveClanId } = useClan();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  const HISTORICAL_TITLE = "Completed programs are read-only";
   const { entries, loading, save } = useDailyLog();
   const { tasks } = useMenteeTasks();
 
@@ -284,7 +288,8 @@ export default function MenteeDailyLog() {
           <div className="flex justify-end">
             <button
               onClick={onSave}
-              disabled={saving}
+              disabled={saving || historical}
+              title={historical ? HISTORICAL_TITLE : undefined}
               className="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50"
             >
               {saving ? (

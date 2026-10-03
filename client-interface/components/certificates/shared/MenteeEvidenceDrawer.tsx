@@ -173,7 +173,8 @@ export function MenteeEvidenceDrawer({
   }, [menteeId, navigation]);
 
   const tierName = (id: string | null | undefined) =>
-    id === NO_CERTIFICATE ? 'No certificate' : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
+    id === NO_CERTIFICATE ? 'No certificate'
+      : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
 
   const v = evidence?.verification ?? null;
 

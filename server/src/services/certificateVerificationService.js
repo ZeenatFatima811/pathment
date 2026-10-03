@@ -253,7 +253,9 @@ class CertificateVerificationService {
       const aiDecision = row.aiDecision === 'no_certificate' ? 'no_certificate' : (row.aiTier ? 'award' : 'undecided');
       const nextDecision = decision ?? (finalTier ? 'award' : aiDecision);
       if (!['award', 'no_certificate'].includes(nextDecision)) throw new ValidationError('Choose a certificate or No certificate before verifying.');
-      if (nextDecision === 'no_certificate' && finalTier) throw new ValidationError('No certificate cannot have a certificate tier.');
+      if (nextDecision === 'no_certificate' && finalTier) {
+        throw new ValidationError('No certificate cannot have a certificate tier.');
+      }
       const tier = nextDecision === 'award' ? (finalTier ?? row.aiTier) : null;
       if (nextDecision === 'award') this._assertTierExists(template, tier);
       const tierConfig = nextDecision === 'award'
@@ -271,7 +273,7 @@ class CertificateVerificationService {
         throw new ValidationError(`Confirm every checklist item for ${tierConfig?.name || tier}: ${missingChecks.join('; ')}`);
       }
       const overridden = nextDecision !== aiDecision || tier !== row.aiTier;
-      const previousDecision = row.decision === 'no_certificate' ? 'no_certificate' : (row.finalTier ? 'award' : 'undecided');
+      const previousDecision = row.decision === 'no_certificate' ? row.decision : (row.finalTier ? 'award' : 'undecided');
       const changed = previousDecision !== nextDecision || row.finalTier !== tier;
       const reasonRequired = overridden || nextDecision === 'no_certificate' || (row.status === 'verified' && changed);
       const explanation = String(reason || '').trim();
@@ -815,9 +817,9 @@ class CertificateVerificationService {
     // the mentee at all. It is on by default for co-mentors.
     let clanIds = await authzService.clansWhereCan(user, PERMISSIONS.CERTIFICATE_VERIFY);
     if (!clanIds.length) return [];
-    if (programId) {
+    {
       const inProgram = await models.Clan.findAll({
-        where: { id: { [Op.in]: clanIds }, programId }, attributes: ['id'], raw: true
+        where: { id: { [Op.in]: clanIds }, kind: 'cohort', ...(programId ? { programId } : {}) }, attributes: ['id'], raw: true
       });
       clanIds = inProgram.map((c) => c.id);
     }
@@ -827,6 +829,8 @@ class CertificateVerificationService {
 
   async _assertCanReview(user, row) {
     if (await authzService.hasAdminAccess(user)) return;
+    const clan = row.clanId && await models.Clan.findByPk(row.clanId);
+    if (clan?.frozenAt) throw new ForbiddenError('Certificate decisions in a completed program are read-only for mentors');
     const allowed = await this._reviewableClanIds(user, null);
     if (!row.clanId || !allowed.includes(row.clanId)) {
       throw new ForbiddenError('You can only verify certificates for mentees in your clan');
@@ -844,9 +848,7 @@ class CertificateVerificationService {
         status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES }
       },
       attributes: ['userId', 'clanId'],
-      include: programId
-        ? [{ model: models.Clan, as: 'clan', where: { programId }, attributes: [] }]
-        : [],
+      include: [{ model: models.Clan, as: 'clan', where: { kind: 'cohort', ...(programId ? { programId } : {}) }, attributes: [] }],
       raw: true
     });
     for (const row of rows) if (!out.has(row.userId)) out.set(row.userId, row.clanId);
@@ -866,7 +868,7 @@ class CertificateVerificationService {
       attributes: ['userId', 'clanId', 'status'],
       include: [
         { model: models.User, as: 'user', attributes: [], required: true, where: { status: { [Op.ne]: 'suspended' } } },
-        ...(programId ? [{ model: models.Clan, as: 'clan', attributes: [], required: true, where: { programId } }] : [])
+        { model: models.Clan, as: 'clan', attributes: [], required: true, where: { kind: 'cohort', ...(programId ? { programId } : {}) } }
       ],
       raw: true, transaction
     });

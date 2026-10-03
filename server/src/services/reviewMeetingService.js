@@ -3,6 +3,7 @@ const { Op, col } = require('sequelize');
 const { models } = require('../db');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const authzService = require('./authzService');
+const mentorshipPauseService = require('./mentorshipPauseService');
 const cfg = require('../config/reviewMeeting');
 const { activeOccurrence } = require('../utils/reviewRecurrence');
 
@@ -303,6 +304,7 @@ class ReviewMeetingService {
     const clanIds = (await models.ClanMembership.findAll({
       where: { userId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
       attributes: ['clanId'], raw: true,
+      include: [{ model: models.Clan, as: 'clan', attributes: [], required: true, where: { frozenAt: null } }],
     })).map((m) => m.clanId).filter(Boolean);
     if (!clanIds.length) return null;
 
@@ -365,7 +367,7 @@ class ReviewMeetingService {
     if (Object.keys(patch).length) await entry.update(patch);
 
     // Re-engage a paused mentee who shows up — reuse the existing behaviour.
-    require('./mentorshipPauseService').autoResumeIfPaused(userId, 'joined a review').catch(() => {});
+    mentorshipPauseService.autoResumeIfPaused(userId, 'joined a review', session.clanId).catch(() => {});
     return { present: (patch.attendance || entry.attendance) === 'present' };
   }
 

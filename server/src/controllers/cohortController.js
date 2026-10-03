@@ -4,13 +4,14 @@ const cohortService = require('../services/cohortService');
 const submissionService = require('../services/submissionService');
 const authzService = require('../services/authzService');
 const { AuthorizationError } = require('../utils/errors/errorTypes');
+const { requestedClanId } = require('../middlewares/portalScope');
 
 /**
  * GET /api/mentor/cohort
  * The logged-in mentor's cohort for the Cockpit, with computed fairness signals.
  */
 const getCohort = catchAsync(async (req, res) => {
-  const { cohort, totals } = await cohortService.getCohort(req.user.id);
+  const { cohort, totals } = await cohortService.getCohort(req.user.id, { clanId: requestedClanId(req) });
   res.status(200).json(successResponse('Cohort retrieved', { cohort, totals }));
 });
 
@@ -20,7 +21,7 @@ const getCohort = catchAsync(async (req, res) => {
  */
 const getCohortActivity = catchAsync(async (req, res) => {
   const period = req.query?.period === 'month' ? 'month' : 'week';
-  const activity = await cohortService.getPeriodActivity(req.user.id, period);
+  const activity = await cohortService.getPeriodActivity(req.user.id, period, { clanId: requestedClanId(req) });
   res.status(200).json(successResponse('Cohort activity retrieved', { activity }));
 });
 
@@ -30,7 +31,7 @@ const getCohortActivity = catchAsync(async (req, res) => {
  */
 const getCohortReportSummary = catchAsync(async (req, res) => {
   const period = req.body?.period === 'month' ? 'month' : 'week';
-  const result = await cohortService.generateReportSummary(req.user.id, period);
+  const result = await cohortService.generateReportSummary(req.user.id, period, { clanId: requestedClanId(req) });
   res.status(200).json(successResponse('Report summary generated', result));
 });
 
@@ -43,12 +44,14 @@ const getMenteeProfile = catchAsync(async (req, res) => {
   // Authorize: the requester must actually be allowed to view this mentee
   // (admin, their match, or a mentee in a clan they mentor). Without this, any
   // mentor/co-mentor could pull any mentee's full profile.
+  const clanId = requestedClanId(req);
   const allowed = await authzService.canViewMentee(req.user, req.params.id, {
-    assignments: req.loadAssignments ? await req.loadAssignments() : undefined
+    assignments: req.loadAssignments ? await req.loadAssignments() : undefined,
+    clanId
   });
   if (!allowed) throw new AuthorizationError('You do not have access to this mentee');
 
-  const profile = await cohortService.getMenteeDetail(req.params.id);
+  const profile = await cohortService.getMenteeDetail(req.params.id, { clanId });
   if (!profile) {
     return res.status(404).json({ success: false, message: 'Mentee not found', statusCode: 404 });
   }

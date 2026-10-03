@@ -34,14 +34,14 @@ class MentorshipPauseService {
    */
   async _scopeClans(user) {
     if (await this._isAdmin(user)) {
-      const clans = await models.Clan.findAll({ attributes: ['id', 'name'] });
+      const clans = await models.Clan.findAll({ where: { frozenAt: null }, attributes: ['id', 'name'] });
       return { clanIds: clans.map((c) => c.id), clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])) };
     }
     const userId = (user && user.id) ? user.id : user;
     const clanIds = await authzService.mentoredClanIds(userId);
     if (!clanIds.length) return { clanIds: [], clanNameById: new Map() };
-    const clans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds } }, attributes: ['id', 'name'] });
-    return { clanIds, clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])) };
+    const clans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds }, frozenAt: null }, attributes: ['id', 'name'] });
+    return { clanIds: clans.map(c => c.id), clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])) };
   }
 
   /** Lead + co-mentors of a clan (recipients for pause/return notifications). */
@@ -412,6 +412,7 @@ class MentorshipPauseService {
   async runReengagement() {
     const paused = await models.ClanMembership.findAll({
       where: { status: 'paused', role: 'mentee', reengageStage: { [Op.lt]: REENGAGE_CADENCE_DAYS.length } },
+      include: [{ model: models.Clan, as: 'clan', required: true, where: { frozenAt: null }, attributes: [] }],
       attributes: ['id', 'userId', 'clanId', 'pausedAt', 'reengageStage', 'reengageCount'],
     });
     const now = Date.now();
@@ -459,9 +460,12 @@ class MentorshipPauseService {
    * clan's mentors they're back. Safe to call on attendance / submission /
    * activity events (no-op when not paused). Never throws into the caller.
    */
-  async autoResumeIfPaused(menteeId, trigger = 'activity') {
+  async autoResumeIfPaused(menteeId, trigger = 'activity', clanId = null) {
     try {
-      const paused = await models.ClanMembership.findAll({ where: { userId: menteeId, role: 'mentee', status: 'paused' } });
+      // An event in one clan must never resume memberships in another space.
+      if (!clanId) return 0;
+      const paused = await models.ClanMembership.findAll({ where: { userId: menteeId, clanId, role: 'mentee', status: 'paused' },
+        include: [{ model: models.Clan, as: 'clan', required: true, where: { frozenAt: null }, attributes: [] }] });
       if (!paused.length) return 0;
       const mentee = await models.User.findByPk(menteeId, { attributes: ['id', 'firstName', 'lastName'] });
       for (const m of paused) {

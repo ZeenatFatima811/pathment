@@ -109,9 +109,9 @@ class CertificateService {
     let clanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
     if (!clanIds.length) return [];
 
-    if (programId) {
+    {
       const inProgram = await models.Clan.findAll({
-        where: { id: { [Op.in]: clanIds }, programId },
+        where: { id: { [Op.in]: clanIds }, kind: 'cohort', ...(programId ? { programId } : {}) },
         attributes: ['id'],
         raw: true
       });
@@ -190,7 +190,7 @@ class CertificateService {
     if (programId) {
       const memberships = await models.ClanMembership.findAll({
         where: { role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
-        include: [{ model: models.Clan, as: 'clan', where: { programId }, attributes: ['id', 'name'] }],
+        include: [{ model: models.Clan, as: 'clan', where: { programId, kind: 'cohort' }, attributes: ['id', 'name'] }],
         attributes: ['userId', 'status']
       });
       for (const mem of memberships) {
@@ -401,14 +401,14 @@ class CertificateService {
       where: { userId: menteeId, role: 'mentee', status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
       include: [{
         model: models.Clan, as: 'clan',
-        where: template.programId ? { programId: template.programId } : undefined,
+        where: { kind: 'cohort', ...(template.programId ? { programId: template.programId } : {}) },
         attributes: ['id', 'name'],
         required: Boolean(template.programId)
       }]
     });
     const clanId = membership?.clan?.id ?? null;
 
-    const [metrics] = await aggregateMenteeData([menteeId], clanId);
+    const [metrics] = await aggregateMenteeData([menteeId], clanId, template.programId);
     const { maxEligibleTier, hardChecks } = preCheckHardConstraints(metrics, criteria);
 
     /**
@@ -1240,7 +1240,8 @@ class CertificateService {
   async enqueueEvaluation(templateId, menteeIds, triggeredBy, criteria, clanId = null, runId = null) {
     const sortedCriteria = sortCriteriaByPriority(criteria);
 
-    const payloads = await aggregateMenteeData(menteeIds, clanId);
+    const template = await models.CertificateTemplate.findByPk(templateId, { attributes: ['programId'] });
+    const payloads = await aggregateMenteeData(menteeIds, clanId, template?.programId);
     const jobRunId = runId || uuidv4();
 
     const queueRows = payloads.map(payload => {
@@ -1573,6 +1574,8 @@ class CertificateService {
       if (!template) {
         throw new NotFoundError('Certificate template not found');
       }
+
+      if (template.program?.closedAt && !await authzService.hasAdminAccess(user)) throw new ForbiddenError('Only an admin can issue certificates after program close');
 
       // Issuing is a WRITE and the recipient list comes straight from the
       // request body, so it has to be checked against what this user actually
@@ -1908,6 +1911,8 @@ class CertificateService {
     }
     const instance = await models.CertificateInstance.findOne({ where: { id } });
     if (!instance) throw new NotFoundError('Certificate instance not found');
+    const template = await models.CertificateTemplate.findByPk(instance.templateId, { include: [{ model: models.Program, as: 'program' }] });
+    if (template?.program?.closedAt && !await authzService.hasAdminAccess(user)) throw new ForbiddenError('Only an admin can revoke certificates after program close');
 
     await this.assertCanActOnMentee(
       user, instance.menteeId, 'You can only revoke certificates for mentees in your clan'

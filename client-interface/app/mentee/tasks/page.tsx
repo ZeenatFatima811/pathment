@@ -30,10 +30,16 @@ import {
   type SubmitTaskTarget,
 } from "@/components/mentee/SubmitTaskDrawer";
 import { stripHtml } from "@/lib/utils/html";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 function MenteeTasksContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  const HISTORICAL_TITLE = "Completed programs are read-only";
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(
     null,
   );
@@ -477,21 +483,27 @@ function MenteeTasksContent() {
                               (isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start interview
                                 </button>
                               ) : isQuiz ? (
                                 <button
                                   onClick={() => router.push(quizHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start quiz
                                 </button>
                               ) : (
                                 <button
                                   onClick={() => handleStartTask(task.id)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start Task
                                 </button>
@@ -502,7 +514,9 @@ function MenteeTasksContent() {
                               (isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   {task.status === "revision_needed"
                                     ? "Redo questions"
@@ -511,7 +525,9 @@ function MenteeTasksContent() {
                               ) : isQuiz ? (
                                 <button
                                   onClick={() => router.push(quizHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Resume quiz
                                 </button>
@@ -529,7 +545,9 @@ function MenteeTasksContent() {
                                         [],
                                     })
                                   }
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Submit Work
                                 </button>
@@ -609,6 +627,7 @@ function MenteeTasksContent() {
         task={submitTarget}
         onClose={() => setSubmitTarget(null)}
         onSubmitted={fetchTasks}
+        readOnly={historical}
       />
     </div>
   );

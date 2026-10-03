@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUpRight, Gauge, Loader2, Search } from 'lucide-react';
 import { useClanPerformance } from '@/lib/hooks/mentor';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, resolveActiveMentorClan } from '@/lib/context/ClanContext';
+import { StandingClanActivity } from '@/components/shared/StandingClanActivity';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
 import { TablePagination } from '@/components/shared/TablePagination';
@@ -38,6 +39,14 @@ const BAND_OPTS = [
 ];
 
 export default function MentorScores() {
+  const { clans, activeClanId } = useClan();
+  const clan = resolveActiveMentorClan(clans, activeClanId);
+  // Standing clans have no cohort scoreboard — activity view only.
+  // Frozen cohort clans keep this same scores UI (ClanWorkspaceNotice + read-only actions elsewhere).
+  if (clan?.kind === 'standing') return <StandingClanActivity clanId={clan.id} />;
+  return <ProgramScores />;
+}
+function ProgramScores() {
   const router = useRouter();
   const { clans, activeClanId } = useClan();
 

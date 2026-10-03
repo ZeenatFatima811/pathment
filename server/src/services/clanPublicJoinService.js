@@ -744,6 +744,7 @@ class ClanPublicJoinService {
       transaction
     });
     if (!clan) throw new NotFoundError('Clan not found');
+    if (clan.kind === 'standing') throw new ValidationError('Standing clan mentees are selected by their mentor through Clan Team');
     return clan;
   }
 

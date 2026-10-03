@@ -23,6 +23,7 @@ import { useProgramDetail } from '@/lib/hooks/admin';
 import { MenuPanel } from '@/components/shared/MenuPanel';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { EditProgramDrawer } from '@/components/admin/EditProgramDrawer';
+import { ProgramCompletionPanel } from '@/components/shared/ProgramCompletionPanel';
 
 type ProgramStatus = 'draft' | 'published' | 'archived' | 'completed';
 
@@ -39,16 +40,13 @@ const STATUS_TRANSITIONS: Record<ProgramStatus, { value: ProgramStatus; label: s
     { value: 'archived',  label: 'Archive',          description: 'Hide without publishing', confirm: 'Archive this draft program?' },
   ],
   published: [
-    { value: 'completed', label: 'Mark Completed',   description: 'Close program - no new enrollments', confirm: 'Mark as completed? Active enrollees may be affected.' },
     { value: 'archived',  label: 'Archive',           description: 'Disable enrollment & hide from mentees', confirm: 'Archive this program? Active enrollees may be affected.' },
   ],
   archived: [
     { value: 'published', label: 'Re-publish',        description: 'Make program active again' },
     { value: 'draft',     label: 'Restore to Draft',  description: 'Move back to editable draft' },
   ],
-  completed: [
-    { value: 'archived',  label: 'Archive',           description: 'Move to archived programs', confirm: 'Archive this completed program?' },
-  ],
+  completed: [],
 };
 
 function StatusSelector({
@@ -158,6 +156,7 @@ export default function ProgramDetails() {
 
   return (
     <>
+      <ProgramCompletionPanel programId={id} admin showResults={false} onChange={refetch} />
       {/* Header */}
       <div className="mb-8">
         <Link

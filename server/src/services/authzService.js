@@ -354,6 +354,23 @@ class AuthzService {
     const assignments = opts.assignments || (await this.getAssignments(user));
     if (await this.hasAdminAccess(user, { assignments })) return true;
 
+    // When a clan is selected, access must come through THAT clan — not another
+    // membership the mentee happens to share with the viewer.
+    if (opts.clanId) {
+      const resource = await this.scopeOfClan(opts.clanId);
+      if (!(await this.can(user, P.MENTEE_VIEW, resource, { assignments }))) return false;
+      const membership = await models.ClanMembership.findOne({
+        where: {
+          clanId: opts.clanId,
+          userId: menteeId,
+          status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          role: 'mentee'
+        },
+        attributes: ['id']
+      });
+      return Boolean(membership);
+    }
+
     const match = await models.MentorMenteeMatch.findOne({
       where: { mentorId: user.id, menteeId, status: 'active' }, attributes: ['id']
     });

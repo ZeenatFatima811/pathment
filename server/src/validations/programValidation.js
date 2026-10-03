@@ -322,6 +322,22 @@ const programValidation = {
       .valid('ASC', 'DESC')
       .default('DESC')
       .optional()
+  }),
+
+  idParams: Joi.object({
+    id: Joi.string().uuid().required()
+  }),
+
+  reopenProgram: Joi.object({
+    reason: Joi.string()
+      .trim()
+      .min(1)
+      .max(4000)
+      .required()
+      .messages({
+        'string.empty': 'Explain why the program is being reopened',
+        'any.required': 'Explain why the program is being reopened'
+      })
   })
 };
 

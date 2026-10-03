@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
+const cohortService = require('../services/cohortService');
 const { sortCriteriaByPriority } = require('./criteriaUtils');
 
 // ==================== HARD CONSTRAINTS PRE-CHECK ====================
@@ -310,8 +311,14 @@ function computeAttendance(menteeId, clanSessions, entryMap) {
   };
 }
 
-async function aggregateMenteeData(menteeIds, clanId = null) {
+async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
   if (!menteeIds || !menteeIds.length) return [];
+  if (clanId) {
+    const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'programId'] });
+    if (clan?.kind === 'standing') return [];
+    programId = clan?.programId || programId;
+  }
+  const scope = { clanId, programId };
 
   const menteeMemberships = await models.ClanMembership.findAll({
     where: {
@@ -320,7 +327,7 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
       status: 'active'
     },
     attributes: ['userId', 'clanId'],
-    include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'] }],
+    include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: true, where: { kind: 'cohort', ...(programId ? { programId } : {}), ...(clanId ? { id: clanId } : {}) } }],
     raw: false
   });
 
@@ -357,6 +364,7 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
 
   const taskWhere = {
     menteeId: { [Op.in]: menteeIds },
+    ...cohortService.taskWhere(scope),
     status:   { [Op.ne]: 'cancelled' }
   };
   if (clanMentorIds !== null) {
@@ -412,7 +420,7 @@ async function aggregateMenteeData(menteeIds, clanId = null) {
   }
 
   const blockers = await models.Blocker.findAll({
-    where: { menteeId: { [Op.in]: menteeIds } },
+    where: { menteeId: { [Op.in]: menteeIds }, ...cohortService.clanWhere(scope) },
     attributes: ['menteeId', 'status', 'category', 'severity', 'openedAt', 'resolvedAt'],
     raw: true
   });

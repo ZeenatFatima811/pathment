@@ -40,7 +40,7 @@ class TaskProgressService {
    */
   async _ownedTask(menteeId, assignedTaskId) {
     const task = await models.AssignedTask.findByPk(assignedTaskId, {
-      attributes: ['id', 'menteeId', 'status', 'dueDate', 'assignedAt'],
+      attributes: ['id', 'menteeId', 'clanId', 'status', 'dueDate', 'assignedAt'],
     });
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This task is not yours');
@@ -88,7 +88,7 @@ class TaskProgressService {
     // and refusing to save somebody's progress because a badge check threw would
     // be the wrong way round.
     try {
-      await this._creditDay(menteeId, dateKey);
+      await this._creditDay(menteeId, dateKey, task.clanId);
     } catch (error) {
       console.error('[taskProgress] Could not credit the day:', error.message);
     }
@@ -108,10 +108,10 @@ class TaskProgressService {
    * is a different fact from "worked on it today". Conflating them would put two
    * meanings in one column.
    */
-  async _creditDay(menteeId, dateKey) {
+  async _creditDay(menteeId, dateKey, clanId) {
     const [day, created] = await models.DailyLogEntry.findOrCreate({
-      where: { menteeId, dateKey },
-      defaults: { menteeId, dateKey, tasksDone: [], slotsDone: [], note: null },
+      where: { menteeId, dateKey, clanId: clanId || null },
+      defaults: { menteeId, dateKey, clanId: clanId || null, tasksDone: [], slotsDone: [], note: null },
     });
     if (!created) await day.update({ loggedAt: new Date() });
     await require('./gamificationService').updateStreak(menteeId);
