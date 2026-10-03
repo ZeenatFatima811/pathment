@@ -3,6 +3,7 @@ const { successResponse } = require('../utils/responses');
 const clanService = require('../services/clanService');
 const clanPublicJoinService = require('../services/clanPublicJoinService');
 const clanHealthService = require('../services/clanHealthService');
+const standingClanService = require('../services/standingClanService');
 const authzService = require('../services/authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { ValidationError, NotFoundError } = require('../utils/errors/errorTypes');
@@ -435,8 +436,7 @@ const revokeClanInvite = catchAsync(async (req, res) => {
 
 /** POST /api/clans/:id/standing-members — add mentees to an approved standing clan */
 const addStandingMembers = catchAsync(async (req, res) => {
-  const standing = require('../services/standingClanService');
-  const members = await standing.addMenteesToStandingClan(
+  const members = await standingClanService.addMenteesToStandingClan(
     req.params.id,
     req.body.menteeIds,
     req.user
@@ -446,8 +446,7 @@ const addStandingMembers = catchAsync(async (req, res) => {
 
 /** GET /api/clans/:id/activity — standing-clan activity summary */
 const getStandingActivity = catchAsync(async (req, res) => {
-  const standing = require('../services/standingClanService');
-  const activity = await standing.activity(req.params.id, req.query, req.user);
+  const activity = await standingClanService.activity(req.params.id, req.query, req.user);
   res.status(200).json(successResponse('Clan activity', activity));
 });
 
