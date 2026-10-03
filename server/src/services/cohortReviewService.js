@@ -5,6 +5,7 @@ const { todayInZone } = require('../utils/timezone');
 const { createAuditLog } = require('../utils/auditContext');
 const cohortService = require('./cohortService');
 const authzService = require('./authzService');
+const mentorshipPauseService = require('./mentorshipPauseService');
 const lockService = require('./cohortReviewLockService');
 
 /**
@@ -252,7 +253,7 @@ class CohortReviewService {
 
     // Re-engagement: marking a paused mentee present means they came back.
     if (patch.attendance === 'present') {
-      require('./mentorshipPauseService').autoResumeIfPaused(menteeId, 'attended a review', session.clanId).catch(() => {});
+      mentorshipPauseService.autoResumeIfPaused(menteeId, 'attended a review', session.clanId).catch(() => {});
     }
 
     const fresh = await models.CohortReviewEntry.findByPk(entry.id, {

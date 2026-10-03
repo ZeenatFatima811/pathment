@@ -3,6 +3,7 @@ const { Op, col } = require('sequelize');
 const { models } = require('../db');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const authzService = require('./authzService');
+const mentorshipPauseService = require('./mentorshipPauseService');
 const cfg = require('../config/reviewMeeting');
 const { activeOccurrence } = require('../utils/reviewRecurrence');
 
@@ -366,7 +367,7 @@ class ReviewMeetingService {
     if (Object.keys(patch).length) await entry.update(patch);
 
     // Re-engage a paused mentee who shows up — reuse the existing behaviour.
-    require('./mentorshipPauseService').autoResumeIfPaused(userId, 'joined a review', session.clanId).catch(() => {});
+    mentorshipPauseService.autoResumeIfPaused(userId, 'joined a review', session.clanId).catch(() => {});
     return { present: (patch.attendance || entry.attendance) === 'present' };
   }
 
