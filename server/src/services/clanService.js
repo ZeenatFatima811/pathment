@@ -6,6 +6,7 @@ const authzService = require('./authzService');
 const { PERMISSIONS: P } = require('../config/permissions');
 const { VISIBLE_MEMBERSHIP_STATUSES, strongestClanRole } = require('../config/membership');
 const { ensureMenteeProfile } = require('./menteeProfile');
+const standingClanService = require('./standingClanService');
 
 // The permissions a co-mentor holds by default — and therefore the exact set a
 // lead mentor / admin may toggle on or off for an individual co-mentor. Derived
@@ -320,7 +321,7 @@ class ClanService {
     if (clan.frozenAt && clan.kind !== 'standing') throw new ForbiddenError('This cohort clan is historical. Reopen its program to change the roster.');
     if (clan.kind === 'standing') enrollmentId = null;
     if (clan.kind === 'standing' && role === 'mentee' && actor && !outerTransaction) {
-      return (await require('./standingClanService').addMenteesToStandingClan(clanId, [userId], actor))[0];
+      return (await standingClanService.addMenteesToStandingClan(clanId, [userId], actor))[0];
     }
 
     const user = await models.User.findByPk(userId, { transaction: outerTransaction });

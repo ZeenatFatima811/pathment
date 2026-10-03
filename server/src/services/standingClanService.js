@@ -1,9 +1,11 @@
 const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const authz = require('./authzService');
-const clanService = require('./clanService');
 const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+
+//  clanService requires this module at load time (module.exports = instance).
+const clans = () => require('./clanService');
 
 class StandingClanService {
   async assertStandingClanPlan(organizationId) {
@@ -101,7 +103,7 @@ class StandingClanService {
         const program = await models.Program.findByPk(request.programId, { transaction, lock: transaction.LOCK.SHARE });
         if (!program?.closedAt || program.status !== 'completed') throw new ValidationError('Close the program before approving this request');
         await this.assertStandingClanPlan(program.organizationId);
-        clan = await clanService.createClan({ programId: request.programId, name: request.name, description: request.description,
+        clan = await clans().createClan({ programId: request.programId, name: request.name, description: request.description,
           kind: 'standing', leadMentorId: request.mentorId }, actor.id, { transaction, standingApproval: true });
       }
       await request.update({ status: decision, reviewedBy: actor.id, reviewedAt: new Date(), decisionNote: String(note || '').trim() || null, createdClanId: clan?.id || null }, { transaction });
@@ -158,7 +160,7 @@ class StandingClanService {
         if (existing) { rows.push(existing); continue; }
         const count = await models.ClanMembership.count({ where: { clanId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } }, transaction });
         if (clan.maxMentees && count >= clan.maxMentees) throw new ConflictError('This clan is full. Increase its capacity before adding more mentees.');
-        rows.push(await clanService.addMember(clanId, { userId, role: 'mentee' }, actor, { transaction }));
+        rows.push(await clans().addMember(clanId, { userId, role: 'mentee' }, actor, { transaction }));
       }
       return rows;
     });
