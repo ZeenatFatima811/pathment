@@ -10,31 +10,6 @@ import { Drawer } from '@/components/shared/Drawer';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { tzList } from '@/components/settings/LocationDetailsFields';
 
-
-// function tzList(): string[] {
-//   try {
-//     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-//     const all = (Intl as any).supportedValuesOf?.('timeZone');
-//     if (Array.isArray(all) && all.length) return all;
-//   } catch {
-//     // ignore
-//   }
-
-//   return [
-//     'UTC',
-//     'America/New_York',
-//     'America/Chicago',
-//     'America/Los_Angeles',
-//     'Europe/London',
-//     'Europe/Berlin',
-//     'Asia/Karachi',
-//     'Asia/Dubai',
-//     'Asia/Kolkata',
-//     'Asia/Singapore',
-//     'Australia/Sydney',
-//   ];
-// }
-
 export function OrganizationSettingsTab() {
   const { current, overview, refresh, switchTo } = useOrganization();
   const [name, setName] = useState('');
