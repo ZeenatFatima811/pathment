@@ -67,6 +67,8 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   const [isPresetsDrawerOpen, setIsPresetsDrawerOpen] = useState(false);
   const [isPreviewGalleryOpen, setIsPreviewGalleryOpen] = useState(false);
   const [isSendDrawerOpen, setIsSendDrawerOpen] = useState(false);
+  const [sendTargetMenteeIds, setSendTargetMenteeIds] = useState<string[] | null>(null);
+  const [aiTargetMenteeIds, setAiTargetMenteeIds] = useState<string[] | null>(null);
   const [logoUrl, setLogoUrl] = useState('');
   const [logoConfig, setLogoConfig] = useState({ xPercent: 50, yPercent: 20, widthPercent: 12 });
 
@@ -215,6 +217,11 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   const activeClanName = clanFilter === 'all'
     ? null
     : rosterClans.find(c => c.id === clanFilter)?.name ?? null;
+  const selectedVisibleMenteeIds = useMemo(
+    () => recipientType === 'mentees' ? Array.from(issuableMenteeIds) : [],
+    [issuableMenteeIds, recipientType]
+  );
+  const selectedWithoutAI = selectedVisibleMenteeIds.filter((id) => !aiEvalMap[id]).length;
 
   const loadReviewRound = useCallback(async () => {
     if (!templateId) {
@@ -772,10 +779,14 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
     if (!templateId) return;
     try {
       setSendingToMentors(true);
-      const res = await certificatesApi.sendToClans(templateId, { deadline });
+      const res = await certificatesApi.sendToClans(templateId, {
+        deadline,
+        menteeIds: sendTargetMenteeIds ?? undefined
+      });
       if (res.success) {
         toast.success(res.message);
         setIsSendDrawerOpen(false);
+        setSendTargetMenteeIds(null);
         setRefreshKey(prev => prev + 1);   // refresh the verification banner
       }
     } catch (err) {
@@ -806,12 +817,13 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
     });
   };
 
-  const handleRunAIEvaluation = () => {
+  const handleRunAIEvaluation = (menteeIds: string[] | null = null) => {
     if (!templateId) return;
     if (!criteria.length) {
       toast.error('Add at least one certificate type and its criteria before evaluating.');
       return;
     }
+    setAiTargetMenteeIds(menteeIds);
     setIsRulesDrawerOpen(true);
   };
 
@@ -825,7 +837,8 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       await certificatesApi.updateTemplate(templateId, { criteria: committed });
       setCriteria(committed);
       setIsRulesDrawerOpen(false);
-      await runAIEvaluation(templateId);
+      await runAIEvaluation(templateId, aiTargetMenteeIds ?? undefined);
+      setAiTargetMenteeIds(null);
     } catch (error) {
       toast.error(extractApiErrorMessage(error, 'Could not save the criteria and start evaluation'));
     }
@@ -1535,9 +1548,13 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       {}
       <SendToClansDrawer
         open={isSendDrawerOpen}
-        onClose={() => setIsSendDrawerOpen(false)}
+        onClose={() => {
+          setIsSendDrawerOpen(false);
+          setSendTargetMenteeIds(null);
+        }}
         sending={sendingToMentors}
         onSend={handleSendToClans}
+        selectedCount={sendTargetMenteeIds?.length ?? null}
       />
 
       <TierPreviewGallery
@@ -1569,7 +1586,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleRunAIEvaluation}
+              onClick={() => handleRunAIEvaluation()}
               disabled={runningAI || !templateId}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition-all shadow-xs"
             >
@@ -1582,7 +1599,10 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
             {templateId && selectedProgramId && (
               <button
                 type="button"
-                onClick={() => setIsSendDrawerOpen(true)}
+                onClick={() => {
+                  setSendTargetMenteeIds(null);
+                  setIsSendDrawerOpen(true);
+                }}
                 disabled={sendingToMentors || !aiRanAt}
                 title={aiRanAt ? undefined : 'Run the AI evaluation first'}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-600 rounded-xl text-xs font-bold transition-colors disabled:opacity-50"
@@ -1811,18 +1831,43 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={handleIssue}
-                disabled={issuing || issuableMenteeIds.size === 0 || selectedSummary[NO_CERTIFICATE] === issuableMenteeIds.size}
-                className="flex items-center gap-1.5 px-6 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-white rounded-xl font-medium text-sm shadow-sm transition-all"
-              >
-                {issuing ? <Loader2 className="animate-spin w-3.5 h-3.5" /> : <Award className="w-3.5 h-3.5" />}
-                {/* Naming the clan matters when one is selected: issuing is
-                    irreversible and the admin should see the scope of what
-                    they are about to send, not a generic label. */}
-                {activeClanName ? `Issue to ${activeClanName}` : 'Issue Certificates'}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {recipientType === 'mentees' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAIEvaluation(selectedVisibleMenteeIds)}
+                      disabled={runningAI || selectedVisibleMenteeIds.length === 0}
+                      className="flex items-center gap-1.5 rounded-xl border border-violet-300 bg-violet-50 px-4 py-2.5 text-xs font-bold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-300"
+                    >
+                      {runningAI ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      Evaluate selected ({selectedVisibleMenteeIds.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSendTargetMenteeIds(selectedVisibleMenteeIds);
+                        setIsSendDrawerOpen(true);
+                      }}
+                      disabled={sendingToMentors || selectedVisibleMenteeIds.length === 0 || selectedWithoutAI > 0}
+                      title={selectedWithoutAI > 0 ? `Evaluate ${selectedWithoutAI} selected mentee(s) first` : undefined}
+                      className="flex items-center gap-1.5 rounded-xl border border-brand-300 bg-brand-50 px-4 py-2.5 text-xs font-bold text-brand-700 transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-800 dark:bg-brand-950/30 dark:text-brand-300"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      Send selected for review ({selectedVisibleMenteeIds.length})
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={handleIssue}
+                  disabled={issuing || issuableMenteeIds.size === 0 || selectedSummary[NO_CERTIFICATE] === issuableMenteeIds.size}
+                  className="flex items-center gap-1.5 px-6 py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-white rounded-xl font-medium text-sm shadow-sm transition-all"
+                >
+                  {issuing ? <Loader2 className="animate-spin w-3.5 h-3.5" /> : <Award className="w-3.5 h-3.5" />}
+                  {activeClanName ? `Issue to ${activeClanName}` : 'Issue Certificates'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1849,14 +1894,19 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       />
       <Drawer
         open={isRulesDrawerOpen}
-        onClose={() => setIsRulesDrawerOpen(false)}
+        onClose={() => {
+          setIsRulesDrawerOpen(false);
+          setAiTargetMenteeIds(null);
+        }}
         title="Certificate Criteria & Rules"
         subtitle={`Requirements configured for the template: ${name || 'New Template'}`}
         width="md"
         footer={templateId ? (
           <button type="button" onClick={startAIEvaluationFromRules} disabled={runningAI || criteria.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
             {runningAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            Evaluate unreviewed mentees
+            {aiTargetMenteeIds
+              ? `Evaluate selected (${aiTargetMenteeIds.length})`
+              : 'Evaluate unreviewed mentees'}
           </button>
         ) : undefined}
       >
@@ -2175,12 +2225,13 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
  * leaving a round hanging silently.
  */
 function SendToClansDrawer({
-  open, onClose, sending, onSend,
+  open, onClose, sending, onSend, selectedCount,
 }: {
   open: boolean;
   onClose: () => void;
   sending: boolean;
   onSend: (deadlineIso: string) => void;
+  selectedCount: number | null;
 }) {
   const [days, setDays] = useState(7);
   const due = new Date(Date.now() + days * 86_400_000);
@@ -2189,8 +2240,10 @@ function SendToClansDrawer({
     <Drawer
       open={open}
       onClose={onClose}
-      title="Send grades to clans"
-      subtitle="Mentors review the AI's grades for their own mentees before anything is issued."
+      title={selectedCount === null ? 'Send grades to clans' : 'Send selected mentees for review'}
+      subtitle={selectedCount === null
+        ? "Mentors review the AI's grades for their own mentees before anything is issued."
+        : `${selectedCount} selected mentee${selectedCount === 1 ? '' : 's'} will be sent to their clan mentors for review.`}
       footer={
         <>
           <button
@@ -2237,7 +2290,7 @@ function SendToClansDrawer({
         <div className="rounded-xl border border-border bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
           <p className="font-semibold text-foreground">What happens next</p>
           <ul className="mt-1.5 list-disc space-y-1 pl-4">
-            <li>Every clan&apos;s mentors and co-mentors are notified.</li>
+            <li>{selectedCount === null ? 'Every relevant clan' : 'The selected mentees’ clans'}&apos; mentors and co-mentors are notified.</li>
             <li>They confirm each grade, or change it with a reason.</li>
             <li>You are notified as each clan finishes.</li>
             <li>The deadline is a nudge — you can still issue at any time.</li>

@@ -156,5 +156,31 @@ describe('certificate verification permission and hand-off', () => {
       // The graded mentee is in Viral Loop, so targeting Core Team reaches nobody.
       expect(res.created).toBe(0);
     });
+
+    it('opens review rows only for the selected evaluated mentees', async () => {
+      const second = await createMentee({ email: 'second-mentee@test.com' });
+      await clanService.addMember(clan.id, { userId: second.id, role: 'mentee' });
+      await template.update({
+        aiEvaluation: {
+          results: [
+            { mentee_id: mentee.id, certificate_tier: 'bronze', match_score: 61 },
+            { mentee_id: second.id, certificate_tier: 'gold', match_score: 90 }
+          ],
+          ranAt: new Date().toISOString()
+        }
+      });
+
+      const res = await verification.sendToClans(template.id, { menteeIds: [second.id] }, admin);
+
+      expect(res.created).toBe(1);
+      const rows = await models.CertificateVerification.findAll({ where: { templateId: template.id }, raw: true });
+      expect(rows.map((row) => row.menteeId)).toEqual([second.id]);
+    });
+
+    it('explains when selected mentees have no AI result yet', async () => {
+      await withAiResults();
+      await expect(verification.sendToClans(template.id, { menteeIds: [coMentor.id] }, admin))
+        .rejects.toThrow(/Run AI evaluation for the selected mentees/i);
+    });
   });
 });

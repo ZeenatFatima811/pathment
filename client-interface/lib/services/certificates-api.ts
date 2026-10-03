@@ -557,7 +557,7 @@ export const certificatesApi = {
    * deadline. Explicit rather than automatic: an admin usually re-runs the AI
    * while tuning the criteria, and notifying on every run is noise.
    */
-  sendToClans: (templateId: string, body: { deadline?: string; clanIds?: string[] } = {}) =>
+  sendToClans: (templateId: string, body: { deadline?: string; clanIds?: string[]; menteeIds?: string[] } = {}) =>
     apiClient.post<{
       success: boolean;
       message: string;
@@ -744,9 +744,13 @@ export const certificatesApi = {
   resendAllTemplateCertificates: (id: string, failedOnly: boolean) =>
     apiClient.post<{ success: boolean; message: string; updated: number }>(`/certificates/templates/${id}/resend`, { failedOnly }),
 
-  runAIEvaluation: (id: string, mentorId?: string) => {
+  runAIEvaluation: (id: string, mentorId?: string, menteeIds?: string[]) => {
     const qs = mentorId ? `?mentorId=${encodeURIComponent(mentorId)}` : '';
-    return apiClient.post<{ success: boolean; runId: string; total: number; message: string }>(`/certificates/templates/${id}/ai-evaluate${qs}`, {}, { timeout: 120000 });
+    return apiClient.post<{ success: boolean; runId: string; total: number; message: string }>(
+      `/certificates/templates/${id}/ai-evaluate${qs}`,
+      { menteeIds },
+      { timeout: 120000 }
+    );
   },
 
   getAIEvaluationStatus: (id: string, runId?: string) => {

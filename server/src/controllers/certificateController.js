@@ -79,7 +79,11 @@ const sendToClans = catchAsync(async (req, res) => {
   const deadline = req.body?.deadline
     || new Date(Date.now() + VERIFICATION_WINDOW_DAYS * 86400000).toISOString();
   const result = await certificateVerificationService.sendToClans(
-    req.params.id, { deadline, clanIds: req.body?.clanIds || null }, req.user
+    req.params.id, {
+      deadline,
+      clanIds: req.body?.clanIds || null,
+      menteeIds: req.body?.menteeIds || null
+    }, req.user
   );
   res.status(200).json(successResponse(
     `Sent to ${result.notified} mentor(s) for verification`,
@@ -124,7 +128,10 @@ const resendAllTemplateCertificates = catchAsync(async (req, res) => {
 });
 
 const runAIEvaluation = catchAsync(async (req, res) => {
-  const result = await certificateService.runAIEvaluation(req.params.id, req.query.mentorId, req.user, { clanId: portalOf(req).clanId });
+  const result = await certificateService.runAIEvaluation(req.params.id, req.query.mentorId, req.user, {
+    clanId: portalOf(req).clanId,
+    menteeIds: req.body?.menteeIds || null
+  });
   if (result.total === 0) {
     const skipped = result.skipped?.total || 0;
     return res.status(200).json(successResponse(

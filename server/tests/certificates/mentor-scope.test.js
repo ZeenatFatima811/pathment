@@ -116,6 +116,15 @@ describe('certificate scope for mentors and co-mentors', () => {
       const res = await certificateService.runAIEvaluation(template.id, null, admin);
       expect(res.total).toBeGreaterThanOrEqual(2);
     });
+
+    it('queues only the admin-selected mentees and ignores out-of-scope ids', async () => {
+      const res = await certificateService.runAIEvaluation(template.id, null, admin, {
+        menteeIds: [myMentee.id, 'not-a-real-or-scoped-user']
+      });
+      expect(res.total).toBe(1);
+      const queued = await models.AIEvaluationQueue.findAll({ where: { runId: res.runId }, raw: true });
+      expect(queued.map((row) => row.menteeId)).toEqual([myMentee.id]);
+    });
   });
 
   describe('issuing', () => {

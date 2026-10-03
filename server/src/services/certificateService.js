@@ -655,7 +655,7 @@ class CertificateService {
   }
 
 
-  async runAIEvaluation(id, queryMentorId, user, { clanId = null } = {}) {
+  async runAIEvaluation(id, queryMentorId, user, { clanId = null, menteeIds: requestedMenteeIds = null } = {}) {
     const template = await models.CertificateTemplate.findOne({ where: { id, status: 'active' } });
     if (!template) throw new NotFoundError('Certificate template not found');
 
@@ -666,7 +666,15 @@ class CertificateService {
     // nobody else's — this is the path that used to hand a co-mentor the entire
     // programme ("0 / 623") because it decided scope from `user.role`.
     const { activeMentees } = await this.getScopedMenteesForTemplate(programId, user, { clanId });
-    const mentees = activeMentees;
+    // Never trust IDs supplied by the browser. Selection is intersected with
+    // the active, role-scoped roster so an admin/mentor cannot evaluate a
+    // hidden recipient from another programme or clan by changing the request.
+    const requested = Array.isArray(requestedMenteeIds)
+      ? new Set(requestedMenteeIds.filter((value) => typeof value === 'string' && value.length > 0))
+      : null;
+    const mentees = requested
+      ? activeMentees.filter((mentee) => requested.has(mentee.id))
+      : activeMentees;
 
     if (mentees.length === 0) {
       return { total: 0, runId: null, data: [] };

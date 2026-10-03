@@ -125,7 +125,7 @@ export function useAIEvaluationProgress(options: UseAIEvaluationProgressOptions 
     };
   }, [aiEvaluationRunId, templateId]);
 
-  const runAIEvaluation = useCallback(async (targetTemplateId?: string) => {
+  const runAIEvaluation = useCallback(async (targetTemplateId?: string, menteeIds?: string[]) => {
     const idToUse = targetTemplateId || templateId;
     if (!idToUse) return;
 
@@ -136,7 +136,7 @@ export function useAIEvaluationProgress(options: UseAIEvaluationProgressOptions 
       setAiProgressCount(0);
       setAiTotalCount(0);
 
-      const res: any = await certificatesApi.runAIEvaluation(idToUse);
+      const res: any = await certificatesApi.runAIEvaluation(idToUse, undefined, menteeIds);
       const runId = res.runId || res.data?.runId;
       const total = res.total ?? res.data?.total ?? 0;
       const skipped = res.skipped ?? res.data?.skipped ?? { total: 0 };

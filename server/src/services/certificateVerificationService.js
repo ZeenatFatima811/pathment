@@ -131,7 +131,7 @@ class CertificateVerificationService {
    * Sending again is a reminder, not a reset — already-signed-off rows keep
    * their decision (see `open`).
    */
-  async sendToClans(templateId, { deadline = null, clanIds = null } = {}, user) {
+  async sendToClans(templateId, { deadline = null, clanIds = null, menteeIds = null } = {}, user) {
     const template = await models.CertificateTemplate.findByPk(templateId);
     if (!template) throw new NotFoundError('Certificate template not found');
 
@@ -143,11 +143,18 @@ class CertificateVerificationService {
     // An admin can send to a subset of clans; everyone else is confined to
     // the clans they may sign off in anyway.
     let scopedResults = results;
+    if (Array.isArray(menteeIds)) {
+      const selected = new Set(menteeIds.filter((value) => typeof value === 'string' && value.length > 0));
+      scopedResults = scopedResults.filter((result) => selected.has(result.mentee_id || result.id));
+      if (!scopedResults.length) {
+        throw new ValidationError('Run AI evaluation for the selected mentees before sending them for review.');
+      }
+    }
     if (Array.isArray(clanIds) && clanIds.length) {
-      const menteeIds = results.map((r) => r.mentee_id || r.id).filter(Boolean);
-      const clanOf = await this._clanOfMentees(menteeIds, template.programId);
+      const scopedMenteeIds = scopedResults.map((r) => r.mentee_id || r.id).filter(Boolean);
+      const clanOf = await this._clanOfMentees(scopedMenteeIds, template.programId);
       const wanted = new Set(clanIds);
-      scopedResults = results.filter((r) => wanted.has(clanOf.get(r.mentee_id || r.id)));
+      scopedResults = scopedResults.filter((r) => wanted.has(clanOf.get(r.mentee_id || r.id)));
     }
 
     const round = await this.open(templateId, scopedResults, { deadline, notify: true });
