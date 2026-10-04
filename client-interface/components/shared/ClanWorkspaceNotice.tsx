@@ -6,6 +6,7 @@ import {
   resolveActiveMentorClan,
 } from '@/lib/context/ClanContext';
 import { StandingClanRequestCta } from '@/components/shared/StandingClanRequestCta';
+import { cn } from '@/components/ui/utils';
 
 /**
  * Banner on mentor/mentee screens when the active cohort clan is frozen
@@ -25,25 +26,38 @@ export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
     role === 'mentor' && Boolean(clan.programId);
 
   return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-card px-4 py-3.5 sm:px-5">
+    <div
+      className={cn(
+        'mb-5 flex flex-wrap items-start justify-between gap-4',
+        'rounded-2xl border border-border bg-card px-4 py-4 sm:px-5',
+      )}
+    >
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <span className="mt-0.5 rounded-xl bg-muted p-2 text-slate-600">
+        {/* Same icon-tile pattern as NotificationCard / stats. */}
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
           <Archive className="h-4 w-4" aria-hidden />
         </span>
-        <div className="min-w-0 flex-1 text-sm">
-          <p className="font-semibold text-slate-900">
-            {clan.name}
-            <span className="font-normal text-slate-500"> · Program closed</span>
-          </p>
-          <p className="mt-1 text-slate-600">
-            This clan is frozen the same screens as before, with actions disabled.
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground leading-snug">
+              {clan.name}
+            </p>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+              Program closed
+            </span>
+          </div>
+          <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+            This clan is frozen — the same screens as before, with actions disabled.
             Past work and feedback stay available to view.
           </p>
         </div>
       </div>
 
       {showStandingRequest && clan.programId ? (
-        <StandingClanRequestCta programId={clan.programId} programName={clan.name} />
+        <div className="flex shrink-0 items-center self-center">
+          <StandingClanRequestCta programId={clan.programId} programName={clan.name} />
+        </div>
       ) : null}
     </div>
   );

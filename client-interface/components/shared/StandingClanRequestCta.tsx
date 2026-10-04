@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Loader2, Plus } from 'lucide-react';
+import { Clock, Loader2, Plus } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { completionApi, type StandingRequest } from '@/lib/services/program-completion-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { useClan } from '@/lib/context/ClanContext';
 import { qk } from '@/lib/query';
 import { useProgramCloseoutEnabled } from '@/lib/hooks/useProgramCloseoutEnabled';
+import { cn } from '@/components/ui/utils';
 
 const button =
   'inline-flex items-center gap-2 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -108,13 +109,19 @@ export function StandingClanRequestCta({
   return (
     <>
       {pending ? (
-        <span className="shrink-0 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800">
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-200',
+            'bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800',
+          )}
+        >
+          <Clock className="h-3.5 w-3.5" aria-hidden />
           Standing clan request pending
         </span>
       ) : (
         <button
           type="button"
-          className={`${button} shrink-0`}
+          className={cn(button, 'shrink-0')}
           onClick={() => {
             setName(programName ? `${programName} · Standing` : '');
             setOpen(true);
