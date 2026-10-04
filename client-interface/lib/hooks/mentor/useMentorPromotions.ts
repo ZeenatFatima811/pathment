@@ -21,6 +21,9 @@ export interface PromotionCandidate {
   motivation: string | null;
   strengths: string | null;
   availability: string | null;
+  /** Clan the mentor nominated from — used when promoting to co-mentor. */
+  targetClanId?: string | null;
+  targetClanName?: string | null;
   // Decision-support context for the interview drawer.
   lastActive?: string | null;
   momentum?: 'up' | 'steady' | 'down' | null;

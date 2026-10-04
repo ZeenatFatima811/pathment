@@ -800,8 +800,9 @@ class ClanService {
     if (!email || !email.trim()) throw new ValidationError('Email is required');
     const clan = await models.Clan.findByPk(clanId);
     if (!clan) throw new NotFoundError('Clan not found');
-    if (clan.kind === 'standing') throw new ValidationError('Select existing organization mentees for this standing clan');
-    if (clan.frozenAt) throw new ValidationError('This completed cohort clan is read-only');
+    // Standing invites reuse the same registration-invite path; addMember keeps
+    // enrollmentId null for standing so completed-cohort enrollments stay untouched.
+    if (clan.frozenAt && clan.kind !== 'standing') throw new ValidationError('This completed cohort clan is read-only');
     const adminService = require('./adminService');
     return adminService.createRegistrationInvite(
       { email: email.trim(), role: 'mentee', clanId, programId: clan.programId },

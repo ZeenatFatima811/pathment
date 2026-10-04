@@ -29,7 +29,8 @@ export interface StandingRequest {
 }
 export const completionApi = {
   preview: (id: string) => apiClient.get<{ data: ClosurePreview }>(`/programs/${id}/completion`).then(r => r.data),
-  close: (id: string) => apiClient.post(`/programs/${id}/close`, {}),
+  close: (id: string, data?: { closedAt?: string | null }) =>
+    apiClient.post(`/programs/${id}/close`, data || {}),
   reopen: (id: string, reason: string) => apiClient.post(`/programs/${id}/reopen`, { reason }),
   results: (id: string) => apiClient.get<{ data: FinalResults }>(`/programs/${id}/results`).then(r => r.data),
   requests: () => apiClient.get<{ data: StandingRequest[] }>('/clan-requests/standing').then(r => r.data),

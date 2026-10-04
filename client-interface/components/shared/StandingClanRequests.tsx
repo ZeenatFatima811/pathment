@@ -81,6 +81,7 @@ export function StandingClanRequests({
             disabled={!closeoutEnabled}
             title={!closeoutEnabled ? STANDING_CLAN_UPGRADE_COPY : undefined}
             onReview={setReview}
+            onDecided={load}
           />
         )}
       </div>)}

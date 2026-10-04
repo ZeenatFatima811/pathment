@@ -36,9 +36,9 @@ function MenteeTasksContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { menteeClans, menteeActiveClanId } = useClan();
-  const historical = isHistoricalCohortClan(
-    menteeClans.find((c) => c.id === menteeActiveClanId),
-  );
+  const activeClan = menteeClans.find((c) => c.id === menteeActiveClanId);
+  const standing = activeClan?.kind === "standing";
+  const historical = isHistoricalCohortClan(activeClan);
   const HISTORICAL_TITLE = "Completed programs are read-only";
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(
     null,
@@ -146,14 +146,16 @@ function MenteeTasksContent() {
       <div className="mentee-page-heading">
         <h1 className="text-slate-900 mb-2">My tasks</h1>
         <p className="text-slate-600">
-          {enrollments.length === 1
-            ? enrollments[0].program?.name
-            : "Track your learning progress and submit your work"}
+          {standing
+            ? activeClan?.name || "Standing clan"
+            : enrollments.length === 1
+              ? enrollments[0].program?.name
+              : "Track your learning progress and submit your work"}
         </p>
       </div>
 
-      {/* Program Selector */}
-      {enrollments.length > 1 && (
+      {/* Program Selector — cohort only; standing work is clan-scoped, not enrollment-scoped */}
+      {!standing && enrollments.length > 1 && (
         <div className="bg-card rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <GraduationCap className="w-4 h-4 text-slate-500" />

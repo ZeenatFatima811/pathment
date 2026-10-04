@@ -38,6 +38,7 @@ router.post(
   '/:id/close',
   authenticate,
   validateParams(programValidation.idParams),
+  validateBody(programValidation.closeProgram),
   programController.closeProgram
 );
 

@@ -328,6 +328,11 @@ export function AssignTaskDrawer({
       toast.error('This cohort is historical. An admin must reopen the program before assigning tasks.');
       return;
     }
+    // Multi-clan mentors must pick Standee vs cohort so work never lands on the wrong side.
+    if (activeClanId === ALL_CLANS && clans.length > 1) {
+      toast.error('Select a clan in the sidebar before assigning work.');
+      return;
+    }
     if (!canSubmit || saving) return;
     try {
       setSaving(true);

@@ -328,6 +328,17 @@ const programValidation = {
     id: Joi.string().uuid().required()
   }),
 
+  closeProgram: Joi.object({
+    // Optional backdated close; omit to use the current time.
+    closedAt: Joi.alternatives()
+      .try(
+        Joi.string().trim().pattern(/^\d{4}-\d{2}-\d{2}$/),
+        Joi.date().iso(),
+        Joi.valid(null, ''),
+      )
+      .optional(),
+  }),
+
   reopenProgram: Joi.object({
     reason: Joi.string()
       .trim()

@@ -93,7 +93,7 @@ export const qk = {
     taskStats: (enrollmentId: string | null, clanId?: string | null) =>
       ['me', 'task-stats', enrollmentId ?? 'all', clanId ?? ''] as const,
     meetings: ['me', 'meetings'] as const,
-    task: (taskId: string) => ['me', 'task', taskId] as const,
+    task: (taskId: string, clanId?: string | null) => ['me', 'task', taskId, clanId ?? null] as const,
     bookable: ['me', 'bookable'] as const,
     enrollments: (menteeId: string) => ['me', 'enrollments', menteeId] as const,
     publicPrograms: ['me', 'public-programs'] as const,

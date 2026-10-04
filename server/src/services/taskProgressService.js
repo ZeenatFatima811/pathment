@@ -41,9 +41,8 @@ class TaskProgressService {
    */
   async _ownedTask(menteeId, assignedTaskId) {
     const task = await models.AssignedTask.findByPk(assignedTaskId, {
-      // Keep ownership and startedAt loaded because Sequelize's tenant guard
-      // validates ownership again when the status transition is persisted.
-      attributes: ['id', 'organizationId', 'menteeId', 'clanId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
+      // organizationId: tenant guard; enrollmentId: frozen-program fallback when clanId is null.
+      attributes: ['id', 'organizationId', 'menteeId', 'clanId', 'enrollmentId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
     });
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This task is not yours');
@@ -231,10 +230,14 @@ class TaskProgressService {
    * Kept cheap on purpose. One query for the tasks, one for every entry across
    * them, then counted in memory. No N+1 across a 20 person clan.
    */
-  async summaryForMentee(menteeId, { limit = 3 } = {}) {
+  async summaryForMentee(menteeId, { limit = 3, clanId = null } = {}) {
     const { Op } = require('sequelize');
+    const where = { menteeId, status: { [Op.in]: ['assigned', 'in_progress', 'revision_needed'] } };
+    // Clan review must not surface open work from another clan (e.g. completed
+    // cohort history on a fresh standing-clan mentee).
+    if (clanId) where.clanId = clanId;
     const tasks = await models.AssignedTask.findAll({
-      where: { menteeId, status: { [Op.in]: ['assigned', 'in_progress', 'revision_needed'] } },
+      where,
       attributes: ['id', 'roadmapTaskId', 'dueDate', 'startedAt', 'assignedAt'],
       include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['title'], required: false }],
       order: [['dueDate', 'ASC NULLS LAST']],

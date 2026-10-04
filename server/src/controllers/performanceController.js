@@ -72,9 +72,6 @@ exports.myPerformance = catchAsync(async (req, res) => {
     attributes: ['clanId']
   });
 
-  const clan = clanId && await models.Clan.findByPk(clanId);
-  if (clan?.kind === 'standing') return res.json(successResponse('Standing clan uses activity reports', { kind: 'standing', score: null, rank: null, parts: [], outOf: 0 }));
-
   if (!membership) {
     return res.status(200).json(
       successResponse('No clan yet', {

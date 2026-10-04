@@ -3,6 +3,7 @@ const { models, sequelize } = require('../db');
 const { ForbiddenError, NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
 const { PERMISSIONS } = require('../config/permissions');
 const authz = require('./authzService');
+const performanceService = require('./performanceService');
 
 const ACTIVE = ['approved', 'pending_match', 'matched', 'active', 'pending_completion', 'level_completed', 'program_completed', 'dropped'];
 
@@ -16,6 +17,19 @@ function outcomeFromEnrollment(enrollment, verification) {
 function enrollmentStatusAtClose(enrollment) {
   if (enrollment.status === 'dropped') return 'dropped';
   return 'program_completed';
+}
+
+/** Resolve close timestamp: omit/empty → now; YYYY-MM-DD  */
+function resolveClosedAt(value) {
+  if (value == null || value === '') return new Date();
+  const raw = String(value).trim();
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const closedAt = dayOnly ? new Date(`${raw}T12:00:00.000Z`) : new Date(raw);
+  if (Number.isNaN(closedAt.getTime())) throw new ValidationError('Enter a valid close date');
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const closeKey = closedAt.toISOString().slice(0, 10);
+  if (closeKey > todayKey) throw new ValidationError('Close date cannot be in the future');
+  return closedAt;
 }
 
 class ProgramLifecycleService {
@@ -91,8 +105,8 @@ class ProgramLifecycleService {
     return {
       ended,
       closed: Boolean(program.closedAt),
-      // Certificates may be unsettled or unissued — warn in UI, still allow close.
-      canClose: ended && !program.closedAt,
+      // Admins may close anytime; certificates may be unsettled — warn in UI, still allow close.
+      canClose: !program.closedAt,
       featureAvailable: true,
       enrollmentCount: enrollments.length,
       unresolved: pending,
@@ -103,19 +117,18 @@ class ProgramLifecycleService {
     };
   }
 
-  async closeProgram(programId, actor) {
+  async closeProgram(programId, actor, { closedAt: closedAtInput } = {}) {
     await this.assertAdmin(actor, programId);
     return sequelize.transaction(async transaction => {
       const program = await models.Program.findByPk(programId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!program) throw new NotFoundError('Program not found');
       if (program.closedAt) return program;
-      if (!await this.hasEnded(program)) throw new ValidationError('The program end date must be reached before closing');
 
       const cohortClans = await models.Clan.findAll({
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],
       });
       const { enrollments } = await this.decisions(programId, transaction);
-      const closedAt = new Date();
+      const closedAt = resolveClosedAt(closedAtInput);
 
       const groups = new Map();
       for (const enrollment of enrollments) {
@@ -124,9 +137,9 @@ class ProgramLifecycleService {
         groups.get(key).push(enrollment);
       }
       for (const group of groups.values()) {
-        const scores = await require('./performanceService').scoreMentees(
+        const scores = await performanceService.scoreMentees(
           group.map(e => e.menteeId),
-          { programId, transaction, live: true },
+          { programId, transaction, live: true, asOf: closedAt },
         );
         for (const enrollment of group) {
           const status = enrollmentStatusAtClose(enrollment);
@@ -212,7 +225,10 @@ class ProgramLifecycleService {
     }
     let scoreByMentee = new Map();
     if (program.closedAt && menteeIds.length) {
-      const scored = await require('./performanceService').scoreMentees(menteeIds, { programId, live: true });
+      // Final results are frozen to the close date — ignore activity after closedAt.
+      const scored = await performanceService.scoreMentees(
+        menteeIds, { programId, live: true, asOf: program.closedAt },
+      );
       for (const m of scored.mentees) scoreByMentee.set(m.id, m);
     }
     const rankByMentee = new Map();

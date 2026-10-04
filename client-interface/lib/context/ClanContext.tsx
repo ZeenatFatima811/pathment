@@ -43,6 +43,24 @@ export function isHistoricalMentorScope(clans: ClanLite[], activeClanId: string)
   return clans.length > 0 && clans.every((c) => isHistoricalCohortClan(c));
 }
 
+/**
+ * Whether mentor writes are locked for a row when the sidebar picker is set.
+ * - Specific clan selected → whole scope follows that clan (frozen cohort = locked).
+ * - All clans → lock per row from the item's clan (Standee writable; frozen cohort not).
+ *   Missing item clanId fails closed under All clans so we never guess.
+ */
+export function isMentorWriteLockedForClan(
+  clans: ClanLite[],
+  activeClanId: string,
+  itemClanId?: string | null,
+): boolean {
+  if (activeClanId !== ALL_CLANS) {
+    return isHistoricalCohortClan(clans.find((c) => c.id === activeClanId) ?? null);
+  }
+  if (!itemClanId) return true;
+  return isHistoricalCohortClan(clans.find((c) => c.id === itemClanId) ?? null);
+}
+
 interface ClanContextValue {
   /** Clans the current user mentors (drives the mentor scope selector). */
   clans: ClanLite[];

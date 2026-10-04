@@ -313,12 +313,18 @@ function computeAttendance(menteeId, clanSessions, entryMap) {
 
 async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
   if (!menteeIds || !menteeIds.length) return [];
+  let standing = false;
   if (clanId) {
     const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'programId'] });
-    if (clan?.kind === 'standing') return [];
-    programId = clan?.programId || programId;
+    if (clan?.kind === 'standing') {
+      // Standee certificates: evidence from this clan only — never empty, never cohort mix.
+      standing = true;
+      programId = null;
+    } else {
+      programId = clan?.programId || programId;
+    }
   }
-  const scope = { clanId, programId };
+  const scope = standing ? { clanId, standing: true } : { clanId, programId };
 
   const menteeMemberships = await models.ClanMembership.findAll({
     where: {
@@ -327,7 +333,15 @@ async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
       status: 'active'
     },
     attributes: ['userId', 'clanId'],
-    include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: true, where: { kind: 'cohort', ...(programId ? { programId } : {}), ...(clanId ? { id: clanId } : {}) } }],
+    include: [{
+      model: models.Clan,
+      as: 'clan',
+      attributes: ['id', 'name'],
+      required: true,
+      where: standing
+        ? { id: clanId, kind: 'standing' }
+        : { kind: 'cohort', ...(programId ? { programId } : {}), ...(clanId ? { id: clanId } : {}) },
+    }],
     raw: false
   });
 
@@ -364,7 +378,7 @@ async function aggregateMenteeData(menteeIds, clanId = null, programId = null) {
 
   const taskWhere = {
     menteeId: { [Op.in]: menteeIds },
-    ...cohortService.taskWhere(scope),
+    ...cohortService.taskFilterForScope(scope),
     status:   { [Op.ne]: 'cancelled' }
   };
   if (clanMentorIds !== null) {

@@ -13,12 +13,25 @@ const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white
 const field = 'mt-2 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm';
 export const STANDING_CLAN_UPGRADE_COPY = 'Standing clan requests are available on Growth and Scale plans.';
 
+/** Only reject opens this drawer. Approve runs immediately from the buttons. */
 export type StandingClanReview = {
   row: StandingRequest;
-  decision: 'approved' | 'rejected';
+  decision: 'rejected';
 };
 
-/** Approve / Reject confirm drawer — shared by the requests list and admin notification drawer. */
+/** Shared API call for both one-click approve and reject-with-note. */
+async function decideStandingRequest(
+  row: StandingRequest,
+  decision: 'approved' | 'rejected',
+  note: string,
+) {
+  await completionApi.decide(row.id, decision, note);
+}
+
+/**
+ * Reject drawer only.
+ * Optional note is sent to the mentor in their rejection notification.
+ */
 export function StandingClanDecisionDrawer({
   review,
   onClose,
@@ -31,35 +44,26 @@ export function StandingClanDecisionDrawer({
   /** Stack above the notification drawer when deciding from the bell. */
   zClass?: string;
 }) {
-  const closeoutEnabled = useProgramCloseoutEnabled();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     if (review) setNote('');
-  }, [review?.row.id, review?.decision]);
+  }, [review?.row.id]);
 
-  const decide = async () => {
+  const reject = async () => {
     if (!review) return;
-    if (review.decision === 'approved' && !closeoutEnabled) {
-      toast.error(STANDING_CLAN_UPGRADE_COPY);
-      return;
-    }
     setBusy(true);
     try {
-      await completionApi.decide(review.row.id, review.decision, note);
-      toast.success(
-        review.decision === 'approved'
-          ? 'Fresh standing clan created with an empty mentee roster'
-          : 'Request rejected',
-      );
+      await decideStandingRequest(review.row, 'rejected', note.trim());
+      toast.success('Request rejected');
       setNote('');
       await queryClient.invalidateQueries({ queryKey: qk.clan.all });
       onClose();
       onDecided?.();
     } catch (e) {
-      toast.error(extractApiErrorMessage(e, 'Could not record decision'));
+      toast.error(extractApiErrorMessage(e, 'Could not reject request'));
     } finally {
       setBusy(false);
     }
@@ -75,33 +79,25 @@ export function StandingClanDecisionDrawer({
         }
       }}
       zClass={zClass}
-      title={review?.decision === 'approved' ? 'Approve standing clan' : 'Reject request'}
+      title="Reject request"
       subtitle={review?.row.name}
       footer={
-        <button
-          className={button}
-          disabled={
-            busy
-            || (review?.decision === 'rejected' && !note.trim())
-            || (review?.decision === 'approved' && !closeoutEnabled)
-          }
-          onClick={decide}
-        >
-          {busy ? 'Saving…' : review?.decision === 'approved' ? 'Approve and create clan' : 'Reject request'}
+        <button className={button} disabled={busy} onClick={reject}>
+          {busy ? 'Saving…' : 'Reject request'}
         </button>
       }
     >
+      {/* Optional — if filled, the mentor sees this as the rejection reason. */}
       <p className="mb-4 text-sm text-slate-600">
-        {review?.decision === 'approved'
-          ? 'This creates a fresh clan and assigns the requesting mentor as its lead. They can then add their chosen mentees.'
-          : 'Let the mentor know why this request cannot be approved.'}
+        Optionally tell the mentor why this request was rejected. They will see the note in their notification.
       </p>
       <label className="text-sm font-medium">
-        Decision note {review?.decision === 'approved' ? '(optional)' : '(required)'}
+        Rejection reason <span className="font-normal text-slate-400">(optional)</span>
         <textarea
           value={note}
           maxLength={4000}
           onChange={(e) => setNote(e.target.value)}
+          placeholder="e.g. Please clarify the proposed mentoring work"
           className={`${field} min-h-24`}
         />
       </label>
@@ -109,36 +105,70 @@ export function StandingClanDecisionDrawer({
   );
 }
 
+/**
+ * Approve / Reject controls used on standing-request notification cards.
+ * - Approve: creates the clan immediately (no note step).
+ * - Reject: opens StandingClanDecisionDrawer for an optional reason.
+ */
 export function StandingClanDecisionButtons({
   row,
   disabled,
   title,
   onReview,
+  onDecided,
 }: {
   row: StandingRequest;
   disabled?: boolean;
   title?: string;
+  /** Opens the reject drawer. */
   onReview: (review: StandingClanReview) => void;
+  /** Refresh lists after a successful approve. */
+  onDecided?: () => void;
 }) {
+  const closeoutEnabled = useProgramCloseoutEnabled();
+  const queryClient = useQueryClient();
+  const [approving, setApproving] = useState(false);
+
+  // One click — no confirmation drawer.
+  const approve = async () => {
+    if (!closeoutEnabled) {
+      toast.error(STANDING_CLAN_UPGRADE_COPY);
+      return;
+    }
+    setApproving(true);
+    try {
+      await decideStandingRequest(row, 'approved', '');
+      toast.success('Fresh standing clan created with an empty mentee roster');
+      await queryClient.invalidateQueries({ queryKey: qk.clan.all });
+      onDecided?.();
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not approve request'));
+    } finally {
+      setApproving(false);
+    }
+  };
+
   return (
     <div className="flex gap-2">
       <button
         type="button"
         className={button}
-        disabled={disabled}
+        disabled={disabled || approving}
         title={title}
         onClick={(e) => {
           e.stopPropagation();
-          onReview({ row, decision: 'approved' });
+          void approve();
         }}
       >
-        Approve
+        {approving ? 'Approving…' : 'Approve'}
       </button>
       <button
         type="button"
         className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        disabled={approving}
         onClick={(e) => {
           e.stopPropagation();
+          // Opens the reject drawer (optional note for the mentor).
           onReview({ row, decision: 'rejected' });
         }}
       >

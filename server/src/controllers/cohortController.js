@@ -2,6 +2,7 @@ const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const cohortService = require('../services/cohortService');
 const submissionService = require('../services/submissionService');
+const mentorshipPauseService = require('../services/mentorshipPauseService');
 const authzService = require('../services/authzService');
 const { AuthorizationError } = require('../utils/errors/errorTypes');
 const { requestedClanId } = require('../middlewares/portalScope');
@@ -56,7 +57,7 @@ const getMenteeProfile = catchAsync(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Mentee not found', statusCode: 404 });
   }
   // Pause state within the requester's clans (drives the Pause/Resume control).
-  try { profile.pauseState = await require('../services/mentorshipPauseService').menteeState(req.user, req.params.id); } catch { profile.pauseState = { paused: false, clanId: null }; }
+  try { profile.pauseState = await mentorshipPauseService.menteeState(req.user, req.params.id, clanId); } catch { profile.pauseState = { paused: false, clanId: null }; }
   res.status(200).json(successResponse('Mentee profile retrieved', { profile }));
 });
 
@@ -149,7 +150,7 @@ const nudge = catchAsync(async (req, res) => {
  * The logged-in mentee's own fairness read (self-facing My Progress).
  */
 const getMyProgress = catchAsync(async (req, res) => {
-  const profile = await cohortService.getMenteeDetail(req.user.id);
+  const profile = await cohortService.getMenteeDetail(req.user.id, { clanId: requestedClanId(req) });
   if (!profile) {
     return res.status(404).json({ success: false, message: 'No progress data yet', statusCode: 404 });
   }
@@ -206,7 +207,7 @@ const getReviewAttendance = catchAsync(async (req, res) => {
 
 /** GET /api/mentor/mentee/:id/attendance/history — full cohort-review attendance (newest first). */
 const getMenteeAttendanceHistory = catchAsync(async (req, res) => {
-  const history = await cohortService.getAttendanceHistory(req.params.id);
+  const history = await cohortService.getAttendanceHistory(req.params.id, requestedClanId(req));
   res.status(200).json(successResponse('Attendance history', { history }));
 });
 
