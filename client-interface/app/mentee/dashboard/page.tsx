@@ -27,6 +27,7 @@ import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
+import { ClanWorkspaceNotice } from "@/components/shared/ClanWorkspaceNotice";
 import { useClan } from "@/lib/context/ClanContext";
 
 function WhatsAppGroupCard({
@@ -792,15 +793,19 @@ function MenteeDashboardInner() {
 export default function MenteeDashboard() {
   // Standing and cohort clans share the same mentee home — clan scope (X-Active-Clan)
   // and useMenteeTasks already isolate standing work from completed-cohort enrollments.
+  // Frozen-clan notice only on This Week (not every mentee tab).
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
-      }
-    >
-      <MenteeDashboardInner />
-    </Suspense>
+    <>
+      <ClanWorkspaceNotice role="mentee" />
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+          </div>
+        }
+      >
+        <MenteeDashboardInner />
+      </Suspense>
+    </>
   );
 }

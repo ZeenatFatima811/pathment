@@ -11,7 +11,6 @@ import { ChangelogMount } from '@/components/shared/ChangelogMount';
 import { InterviewResumeBar } from '@/components/mentee/InterviewResumeBar';
 import { ReviewJoinBar } from '@/components/mentee/ReviewJoinBar';
 import { PausedGate } from '@/components/mentee/PausedGate';
-import { ClanWorkspaceNotice } from '@/components/shared/ClanWorkspaceNotice';
 
 export default function MenteeLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -31,7 +30,6 @@ export default function MenteeLayout({ children }: { children: React.ReactNode }
               <PausedGate>
                 <ReviewJoinBar />
                 <MenteeWorkspaceTabs />
-                <ClanWorkspaceNotice role="mentee" />
                 {children}
               </PausedGate>
             </div>

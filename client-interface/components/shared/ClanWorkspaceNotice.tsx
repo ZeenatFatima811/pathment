@@ -48,7 +48,7 @@ export function ClanWorkspaceNotice({ role }: { role: 'mentor' | 'mentee' }) {
             </span>
           </div>
           <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-            This clan is frozen — the same screens as before, with actions disabled.
+            This clan is frozen. The same screens as before, with actions disabled.
             Past work and feedback stay available to view.
           </p>
         </div>
