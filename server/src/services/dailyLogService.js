@@ -1,5 +1,5 @@
 const { models } = require('../db');
-const { ValidationError } = require('../utils/errors/errorTypes');
+const { ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const { resolveMenteeClanId, listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
 
 /** Daily check-in log (one entry per mentee per day, upserted). */
@@ -13,6 +13,12 @@ class DailyLogService {
       throw new ValidationError('dateKey (YYYY-MM-DD) is required');
     }
     const clanId = await resolveMenteeClanId(menteeId, requestedClanId);
+    if (clanId) {
+      const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'frozenAt'] });
+      if (clan && clan.kind !== 'standing' && clan.frozenAt) {
+        throw new ForbiddenError('Completed programs are read-only');
+      }
+    }
     const memberships = await listMenteeClans(menteeId);
     const where = clanScopedWhere({ menteeId, dateKey }, clanId, memberships.length);
     const tasks = Array.isArray(tasksDone) ? tasksDone : [];

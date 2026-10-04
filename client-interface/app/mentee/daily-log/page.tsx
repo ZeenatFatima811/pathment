@@ -203,7 +203,9 @@ export default function MenteeDailyLog() {
                         type="checkbox"
                         checked={slotsDone.has(s.id)}
                         onChange={() => toggleSlot(s.id)}
-                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        disabled={historical}
+                        title={historical ? HISTORICAL_TITLE : undefined}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                       />
                       <span className="text-slate-400 text-xs w-20 shrink-0 pt-0.5">
                         {s.time}
@@ -262,7 +264,9 @@ export default function MenteeDailyLog() {
                     type="checkbox"
                     checked={tasksDone.has(t.id)}
                     onChange={() => toggle(t.id)}
-                    className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                    disabled={historical}
+                    title={historical ? HISTORICAL_TITLE : undefined}
+                    className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                   />
                   <span className="text-sm text-slate-700">{taskTitle(t)}</span>
                 </label>
@@ -280,8 +284,10 @@ export default function MenteeDailyLog() {
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
+              disabled={historical}
+              title={historical ? HISTORICAL_TITLE : undefined}
               placeholder="How did today go? Anything you got stuck on?"
-              className="w-full border border-slate-300 rounded-xl p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="w-full border border-slate-300 rounded-xl p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
             />
           </div>
 

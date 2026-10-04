@@ -40,11 +40,30 @@ class TaskProgressService {
    */
   async _ownedTask(menteeId, assignedTaskId) {
     const task = await models.AssignedTask.findByPk(assignedTaskId, {
-      attributes: ['id', 'menteeId', 'clanId', 'status', 'dueDate', 'assignedAt'],
+      attributes: ['id', 'menteeId', 'clanId', 'enrollmentId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
     });
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This task is not yours');
     return task;
+  }
+
+  /** Cohort clans freeze on formal program close — standing clans stay writable. */
+  async _assertWritable(task) {
+    if (task.clanId) {
+      const clan = await models.Clan.findByPk(task.clanId, { attributes: ['kind', 'frozenAt'] });
+      if (clan && clan.kind !== 'standing' && clan.frozenAt) {
+        throw new ForbiddenError('Completed programs are read-only');
+      }
+      return;
+    }
+    if (!task.enrollmentId) return;
+    const enrollment = await models.Enrollment.findByPk(task.enrollmentId, {
+      attributes: ['id'],
+      include: [{ model: models.Program, as: 'program', attributes: ['closedAt'] }],
+    });
+    if (enrollment?.program?.closedAt) {
+      throw new ForbiddenError('Completed programs are read-only');
+    }
   }
 
   /**
@@ -61,6 +80,7 @@ class TaskProgressService {
     }
 
     const task = await this._ownedTask(menteeId, assignedTaskId);
+    await this._assertWritable(task);
     // Nothing to log on work that is already finished or was never started.
     if (['completed', 'cancelled'].includes(task.status)) {
       throw new ValidationError('This task is closed, so there is no progress to add');
@@ -205,7 +225,8 @@ class TaskProgressService {
    * tidies up before review. The honesty is the value.
    */
   async remove(menteeId, assignedTaskId, dateKey) {
-    await this._ownedTask(menteeId, assignedTaskId);
+    const task = await this._ownedTask(menteeId, assignedTaskId);
+    await this._assertWritable(task);
     const entry = await models.TaskProgressEntry.findOne({ where: { assignedTaskId, dateKey } });
     if (!entry) throw new NotFoundError('No progress logged for that day');
 

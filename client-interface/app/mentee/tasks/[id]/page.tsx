@@ -810,7 +810,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
           Interview and quiz tasks are one sitting, so there is no day three. */}
           {!["completed", "cancelled"].includes(task.status) &&
             !isInterview &&
-            !isQuiz && <TaskProgressTimeline taskId={task.id} mode="mentee" />}
+            !isQuiz && <TaskProgressTimeline taskId={task.id} mode="mentee" readOnly={historical} />}
 
           {/* What's getting in the way - log roadblock / delay / request extension */}
           {!["completed", "cancelled"].includes(task.status) && (
