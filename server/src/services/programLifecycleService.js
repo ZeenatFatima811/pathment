@@ -91,8 +91,8 @@ class ProgramLifecycleService {
     return {
       ended,
       closed: Boolean(program.closedAt),
-      // Certificates may be unsettled or unissued — warn in UI, still allow close.
-      canClose: ended && !program.closedAt,
+      // Admins may close anytime; certificates may be unsettled — warn in UI, still allow close.
+      canClose: !program.closedAt,
       featureAvailable: true,
       enrollmentCount: enrollments.length,
       unresolved: pending,
@@ -109,7 +109,6 @@ class ProgramLifecycleService {
       const program = await models.Program.findByPk(programId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!program) throw new NotFoundError('Program not found');
       if (program.closedAt) return program;
-      if (!await this.hasEnded(program)) throw new ValidationError('The program end date must be reached before closing');
 
       await models.Clan.findAll({
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],

@@ -95,7 +95,7 @@ export function ProgramCompletionPanel({
   return <section className="my-6 space-y-4 rounded-2xl border border-slate-200 bg-card p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="flex items-center gap-2 text-base font-semibold text-slate-900"><Archive className="h-5 w-5" /> Program completion</h2>
-        <p className="mt-1 text-sm text-slate-500">{results.closed ? 'Program is closed. Results reflect enrollments and certificate decisions; cohort clans are read-only.' : preview?.ended ? 'The scheduled period has ended. You can close even if some certificates are unsettled — review decisions when you can.' : 'The scheduled period is still open. Formal closure becomes available on the end date.'}</p></div>
+        <p className="mt-1 text-sm text-slate-500">{results.closed ? 'Program is closed. Results reflect enrollments and certificate decisions; cohort clans are read-only.' : preview?.ended ? 'The scheduled period has ended. You can close even if some certificates are unsettled — review decisions when you can.' : 'The scheduled period is still open. You can close the program anytime — cohort clans will freeze and final results will be saved.'}</p></div>
       {admin && featureAvailable && (results.closed ? <button className={button} onClick={() => setReopening(true)}>Reopen for correction</button> : <button className={button} disabled={busy || !preview?.canClose} onClick={close}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Close program</button>)}
     </div>
     {preview && !preview.closed && preview.unresolved.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
