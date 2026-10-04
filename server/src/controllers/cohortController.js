@@ -206,7 +206,7 @@ const getReviewAttendance = catchAsync(async (req, res) => {
 
 /** GET /api/mentor/mentee/:id/attendance/history — full cohort-review attendance (newest first). */
 const getMenteeAttendanceHistory = catchAsync(async (req, res) => {
-  const history = await cohortService.getAttendanceHistory(req.params.id);
+  const history = await cohortService.getAttendanceHistory(req.params.id, requestedClanId(req));
   res.status(200).json(successResponse('Attendance history', { history }));
 });
 
