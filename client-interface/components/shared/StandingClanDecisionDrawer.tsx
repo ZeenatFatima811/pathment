@@ -13,11 +13,13 @@ const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white
 const field = 'mt-2 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm';
 export const STANDING_CLAN_UPGRADE_COPY = 'Standing clan requests are available on Growth and Scale plans.';
 
+/** Only reject opens this drawer. Approve runs immediately from the buttons. */
 export type StandingClanReview = {
   row: StandingRequest;
   decision: 'rejected';
 };
 
+/** Shared API call for both one-click approve and reject-with-note. */
 async function decideStandingRequest(
   row: StandingRequest,
   decision: 'approved' | 'rejected',
@@ -26,7 +28,10 @@ async function decideStandingRequest(
   await completionApi.decide(row.id, decision, note);
 }
 
-/** Reject confirm drawer — optional note is shown to the mentor. Approve is one-click (no drawer). */
+/**
+ * Reject drawer only.
+ * Optional note is sent to the mentor in their rejection notification.
+ */
 export function StandingClanDecisionDrawer({
   review,
   onClose,
@@ -82,6 +87,7 @@ export function StandingClanDecisionDrawer({
         </button>
       }
     >
+      {/* Optional — if filled, the mentor sees this as the rejection reason. */}
       <p className="mb-4 text-sm text-slate-600">
         Optionally tell the mentor why this request was rejected. They will see the note in their notification.
       </p>
@@ -99,6 +105,11 @@ export function StandingClanDecisionDrawer({
   );
 }
 
+/**
+ * Approve / Reject controls used on standing-request notification cards.
+ * - Approve: creates the clan immediately (no note step).
+ * - Reject: opens StandingClanDecisionDrawer for an optional reason.
+ */
 export function StandingClanDecisionButtons({
   row,
   disabled,
@@ -109,14 +120,16 @@ export function StandingClanDecisionButtons({
   row: StandingRequest;
   disabled?: boolean;
   title?: string;
-  /** Opens the reject drawer (approve is handled in-place). */
+  /** Opens the reject drawer. */
   onReview: (review: StandingClanReview) => void;
+  /** Refresh lists after a successful approve. */
   onDecided?: () => void;
 }) {
   const closeoutEnabled = useProgramCloseoutEnabled();
   const queryClient = useQueryClient();
   const [approving, setApproving] = useState(false);
 
+  // One click — no confirmation drawer.
   const approve = async () => {
     if (!closeoutEnabled) {
       toast.error(STANDING_CLAN_UPGRADE_COPY);
@@ -155,6 +168,7 @@ export function StandingClanDecisionButtons({
         disabled={approving}
         onClick={(e) => {
           e.stopPropagation();
+          // Opens the reject drawer (optional note for the mentor).
           onReview({ row, decision: 'rejected' });
         }}
       >

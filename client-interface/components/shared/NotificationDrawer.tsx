@@ -6,8 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
   X,
-  Check,
-  Trash2,
   Clock,
   ListTodo,
   MessageSquare,
@@ -15,6 +13,7 @@ import {
   Trophy,
   Zap,
   ChevronRight,
+  Users,
 } from "lucide-react";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -36,6 +35,7 @@ import {
   STANDING_CLAN_UPGRADE_COPY,
   type StandingClanReview,
 } from "@/components/shared/StandingClanDecisionDrawer";
+import { NotificationCard } from "@/components/shared/NotificationCard";
 
 interface Notification {
   id: string;
@@ -130,8 +130,8 @@ export default function NotificationDrawer({
   const visibleNotifications = scopedNotifications.filter(
     (notification) => filter === "all" || notification.status === "unread",
   );
-  // Pending standing requests already have Approve/Reject above the feed —
-  // hide matching notification rows so the admin does not see duplicates.
+  // Standing requests are shown as cards with Approve/Reject above the feed.
+  // Hide the matching feed rows so admins do not see the same request twice.
   const pendingStandingIds = useMemo(
     () => new Set(pendingStanding.map((row) => row.id)),
     [pendingStanding],
@@ -161,6 +161,7 @@ export default function NotificationDrawer({
     if (isOpen) reload();
   }, [isOpen, reload]);
 
+  // Admin only: load open standing-clan requests for the Approve/Reject cards.
   const loadPendingStanding = useCallback(async () => {
     if (!isAdminDrawer) {
       setPendingStanding([]);
@@ -172,7 +173,7 @@ export default function NotificationDrawer({
         (Array.isArray(rows) ? rows : []).filter((r) => r.status === "pending"),
       );
     } catch {
-      // Keep the notification feed usable even if standing requests fail to load.
+      // Feed should still work if this request fails.
       setPendingStanding([]);
     }
   }, [isAdminDrawer]);
@@ -198,8 +199,7 @@ export default function NotificationDrawer({
   const handleDelete = (notificationId: string) => remove(notificationId);
 
   const handleNotificationClick = (notification: Notification) => {
-    // Admin standing-clan requests are decided via Approve / Reject on the
-    // pending card above — don't open a second approve step from the feed item.
+    // Standing requests: decide with the card buttons above, not by navigating away.
     if (
       isAdminDrawer &&
       notification.relatedEntityType === "standing_clan_request" &&
@@ -208,6 +208,7 @@ export default function NotificationDrawer({
       if (notification.status === "unread") handleMarkRead(notification.id);
       return;
     }
+    // Normal notification: open its link (if any) and mark as read.
     if (notification.actionUrl) {
       router.push(workspacePath(notification.actionUrl));
       setIsOpen(false);
@@ -375,26 +376,29 @@ export default function NotificationDrawer({
                 ))}
               </div>
               <div className="flex-1 overflow-y-auto bg-muted/30 p-3">
+                {/* Same NotificationCard as the feed, but with Approve / Reject actions. */}
                 {isAdminDrawer && pendingStanding.length > 0 && (
                   <div className="mb-3 space-y-2">
                     <p className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
                       Standing clan requests
                     </p>
                     {pendingStanding.map((row) => (
-                      <div
+                      <NotificationCard
                         key={row.id}
-                        className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-slate-900">{row.name}</p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {row.program.name} · {row.mentor.firstName} {row.mentor.lastName}
-                            </p>
-                            {row.description && (
-                              <p className="mt-2 text-sm text-slate-600 line-clamp-2">{row.description}</p>
-                            )}
-                          </div>
+                        unread
+                        title={row.name}
+                        message={
+                          row.description?.trim()
+                            || `${row.program.name} · ${row.mentor.firstName} ${row.mentor.lastName}`
+                        }
+                        meta={
+                          row.description?.trim()
+                            ? `${row.program.name} · ${row.mentor.firstName} ${row.mentor.lastName}`
+                            : undefined
+                        }
+                        icon={<Users className="w-4 h-4" />}
+                        iconClassName="bg-amber-50 text-amber-700"
+                        actions={
                           <StandingClanDecisionButtons
                             row={row}
                             disabled={!closeoutEnabled}
@@ -405,8 +409,8 @@ export default function NotificationDrawer({
                               reload();
                             }}
                           />
-                        </div>
-                      </div>
+                        }
+                      />
                     ))}
                   </div>
                 )}
@@ -437,86 +441,38 @@ export default function NotificationDrawer({
                   </div>
                 ) : feedNotifications.length === 0 ? null : (
                   <div className="space-y-3">
-                    {feedNotifications.map((notification) => (
-                      <div
-                        key={notification.id}
-                        className={`group rounded-2xl border border-border px-4 py-4 cursor-pointer transition-colors ${
-                          notification.status === "unread"
-                            ? "bg-brand-50 dark:bg-brand-500/10 hover:bg-brand-100 dark:hover:bg-brand-500/20"
-                            : "bg-card hover:bg-slate-50"
-                        }`}
-                        onClick={() => handleNotificationClick(notification)}
-                      >
-                        <div className="flex items-start gap-3">
-                          {(() => {
-                            const { Icon, cls } = typeMeta(notification.type);
-                            return (
-                              <div
-                                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cls}`}
-                              >
-                                <Icon className="w-4 h-4" />
-                              </div>
-                            );
-                          })()}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                className="text-left text-sm font-semibold text-foreground leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleNotificationClick(notification);
-                                }}
-                              >
-                                {notification.title}
-                              </button>
-                              {notification.status === "unread" && (
-                                <span className="w-2 h-2 rounded-full bg-brand-600 shrink-0" />
-                              )}
-                            </div>
-                            <p className="mt-2 text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                              {toMessageText(notification.message)}
-                            </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <p className="text-xs text-slate-400">
-                                {formatTime(notification.createdAt)}
-                              </p>
-                              {notification.actionUrl &&
-                                notification.actionLabel && (
-                                  <span className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600">
-                                    · {notification.actionLabel}{" "}
-                                    <ChevronRight className="w-3 h-3" />
-                                  </span>
-                                )}
-                            </div>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-1 opacity-100">
-                            {notification.status === "unread" && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMarkRead(notification.id);
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-100 rounded"
-                                aria-label="Mark notification read"
-                              >
-                                <Check className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(notification.id);
-                              }}
-                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded"
-                              aria-label="Delete notification"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                    {/* Normal notifications: same card, mark-read / delete instead of actions. */}
+                    {feedNotifications.map((notification) => {
+                      const { Icon, cls } = typeMeta(notification.type);
+                      return (
+                        <NotificationCard
+                          key={notification.id}
+                          unread={notification.status === "unread"}
+                          title={notification.title}
+                          message={toMessageText(notification.message)}
+                          icon={<Icon className="w-4 h-4" />}
+                          iconClassName={cls}
+                          onClick={() => handleNotificationClick(notification)}
+                          onMarkRead={
+                            notification.status === "unread"
+                              ? () => handleMarkRead(notification.id)
+                              : undefined
+                          }
+                          onDelete={() => handleDelete(notification.id)}
+                          meta={
+                            <>
+                              <span>{formatTime(notification.createdAt)}</span>
+                              {notification.actionUrl && notification.actionLabel ? (
+                                <span className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600">
+                                  · {notification.actionLabel}{" "}
+                                  <ChevronRight className="w-3 h-3" />
+                                </span>
+                              ) : null}
+                            </>
+                          }
+                        />
+                      );
+                    })}
                   </div>
                 )}
               </div>
