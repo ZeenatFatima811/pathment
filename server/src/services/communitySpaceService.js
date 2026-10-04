@@ -82,7 +82,6 @@ class CommunitySpaceService {
         subtitle: m.clan.program?.name || 'Clan',
         role: m.role,
         isModerator: moderator,
-        readOnly: m.clan.kind !== 'standing' && Boolean(m.clan.frozenAt)
       });
       if (m.clan.programId && m.clan.kind !== 'standing') {
         programNames.set(m.clan.programId, m.clan.program?.name || 'Program');
@@ -98,7 +97,6 @@ class CommunitySpaceService {
           type: 'cohort',
           id: e.cohort.id,
           name: e.cohort.name,
-          readOnly: e.cohort.status === 'completed',
           subtitle: e.program?.name ? `${e.program.name} · batch` : 'Cohort',
           role: 'member',
           isModerator: isAdmin(user)
@@ -142,7 +140,6 @@ class CommunitySpaceService {
           type: 'cohort',
           id: c.id,
           name: c.name,
-          readOnly: c.status === 'completed',
           subtitle: `${programNames.get(c.programId) || 'Program'} · batch`,
           role: 'mentor',
           isModerator: true
@@ -176,8 +173,7 @@ class CommunitySpaceService {
     if (isAdmin(user)) {
       const space = scopeType === 'clan' ? await models.Clan.findByPk(scopeId) : scopeType === 'cohort' ? await models.Cohort.findByPk(scopeId) : await models.Program.findByPk(scopeId);
       if (!space) return null;
-      const readOnly = scopeType === 'clan' ? space.kind !== 'standing' && Boolean(space.frozenAt) : scopeType === 'cohort' && space.status === 'completed';
-      return { type: scopeType, id: scopeId, name: space.name, readOnly, isModerator: true, role: 'admin' };
+      return { type: scopeType, id: scopeId, name: space.name, isModerator: true, role: 'admin' };
     }
     return null;
   }
