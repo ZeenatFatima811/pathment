@@ -358,7 +358,7 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
         </div>
       )}
 
-      {myRole === 'lead_mentor' && !clan.frozenAt && clan.kind !== 'standing' && <PublicJoinLeadPanel clanId={clanId} onChanged={load} />}
+      {myRole === 'lead_mentor' && !(clan.frozenAt && clan.kind !== 'standing') && <PublicJoinLeadPanel clanId={clanId} onChanged={load} />}
 
       <div className="mt-5 space-y-5">
         <Section icon={<Crown className="w-3.5 h-3.5" />} title="Lead mentor" items={lead} removable={false} />
@@ -1138,7 +1138,7 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
         </div>
       }>
       <div className="space-y-5">
-        {!standing && <div>
+        <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Invite someone new</label>
           <div className="flex gap-2">
             <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} type="email" placeholder="email@example.com"
@@ -1149,8 +1149,8 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
             </button>
           </div>
           <p className="mt-1 text-xs text-slate-400">They get a magic-link to join this clan as a mentee.</p>
-        </div>}
-        {standing && <p className="text-sm text-slate-500">Choose mentees from your organization. They keep their other memberships, enrollments, and work.</p>}
+        </div>
+        {standing && <p className="text-sm text-slate-500">You can also add people already in your organization. They keep other memberships and completed-clan work.</p>}
 
         <div className="pt-4 border-t border-slate-100 space-y-3">
           {standing && (
