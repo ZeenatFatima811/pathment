@@ -8,6 +8,7 @@ const authzService = require('./authzService');
 const taskService = require('./taskService');
 const { pointsForDifficulty } = require('../config/points');
 const { resolveMenteeClanId, listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * linearRoadmapService - the new design's linear roadmap flow for mentors:
@@ -828,6 +829,7 @@ class LinearRoadmapService {
     }
 
     const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: mentorId });
+    await clanLifecycleService.assertClanWritable(resolvedClanId);
 
     const actualClan = resolvedClanId && await models.Clan.findByPk(resolvedClanId);
     let enrollment = actualClan?.kind === 'standing' ? { id: null }

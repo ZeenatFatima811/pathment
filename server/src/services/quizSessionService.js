@@ -5,6 +5,7 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const authzService = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * QuizSessionService — the candidate runner + auto-grading + mentor review for
@@ -166,6 +167,7 @@ class QuizSessionService {
   // ── Attempt lifecycle ────────────────────────────────────────────────────────
 
   async startOrResume(taskId, menteeId) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const { assignment } = await this._loadContext(taskId, menteeId);
 
     const existing = await models.QuizSession.findOne({
@@ -217,6 +219,7 @@ class QuizSessionService {
   /** Upsert a single answer (autosave). Snapshots the question meta on first write. */
   async saveAnswer(sessionId, menteeId, questionId, payload = {}) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
 
     const question = await models.QuizQuestion.findByPk(questionId);
@@ -257,6 +260,7 @@ class QuizSessionService {
    */
   async submit(sessionId, menteeId) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     const { task, assignment, questions } = await this._loadContext(session.assignedTaskId, menteeId);
 
     // Grade against the saved answers (create rows for skipped questions too).
@@ -498,6 +502,7 @@ class QuizSessionService {
 
   /** Override a per-answer grade (mentor, review mode). */
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewer(mentorId, task);
@@ -529,6 +534,7 @@ class QuizSessionService {
   /** Finalize the review: sum the per-answer points and complete the task through
    *  the shared review path (points/gamification/notifications). */
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewer(mentorId, task);

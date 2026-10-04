@@ -2,6 +2,7 @@ const { models } = require('../db');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const { todayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /** How long after its day an entry stays editable. */
 const EDIT_WINDOW_HOURS = 48;
@@ -63,6 +64,7 @@ class TaskProgressService {
     }
 
     const task = await this._ownedTask(menteeId, assignedTaskId);
+    await clanLifecycleService.assertTaskWritable(task);
     // Nothing to log on work that is already finished or was never started.
     if (['completed', 'cancelled'].includes(task.status)) {
       throw new ValidationError('This task is closed, so there is no progress to add');
@@ -206,7 +208,8 @@ class TaskProgressService {
    * tidies up before review. The honesty is the value.
    */
   async remove(menteeId, assignedTaskId, dateKey) {
-    await this._ownedTask(menteeId, assignedTaskId);
+    const task = await this._ownedTask(menteeId, assignedTaskId);
+    await clanLifecycleService.assertTaskWritable(task);
     const entry = await models.TaskProgressEntry.findOne({ where: { assignedTaskId, dateKey } });
     if (!entry) throw new NotFoundError('No progress logged for that day');
 
