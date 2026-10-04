@@ -149,7 +149,7 @@ const nudge = catchAsync(async (req, res) => {
  * The logged-in mentee's own fairness read (self-facing My Progress).
  */
 const getMyProgress = catchAsync(async (req, res) => {
-  const profile = await cohortService.getMenteeDetail(req.user.id);
+  const profile = await cohortService.getMenteeDetail(req.user.id, { clanId: requestedClanId(req) });
   if (!profile) {
     return res.status(404).json({ success: false, message: 'No progress data yet', statusCode: 404 });
   }

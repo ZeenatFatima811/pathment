@@ -27,8 +27,7 @@ import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
-import { useClan } from '@/lib/context/ClanContext';
-import { StandingClanActivity } from '@/components/shared/StandingClanActivity';
+import { useClan } from "@/lib/context/ClanContext";
 
 function WhatsAppGroupCard({
   enrollment,
@@ -129,6 +128,11 @@ function WhatsAppGroupCard({
 function MenteeDashboardInner() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  // Standing has no program enrollment — hide cohort enrollment chrome so
+  // completed-clan history never appears while this clan is selected.
+  const standing =
+    menteeClans.find((c) => c.id === menteeActiveClanId)?.kind === "standing";
   const {
     enrollments,
     loading,
@@ -147,13 +151,14 @@ function MenteeDashboardInner() {
 
   // Deep link from the "Leave feedback" notification: ?review=<enrollmentId>
   useEffect(() => {
+    if (standing) return;
     const reviewId = searchParams.get("review");
     if (!reviewId || loading) return;
     const target = enrollments.find((e) => e.id === reviewId);
     if (target && target.status === "program_completed") {
       openFeedback(reviewId, target.program?.name || "your program");
     }
-  }, [searchParams, enrollments, loading, openFeedback]);
+  }, [standing, searchParams, enrollments, loading, openFeedback]);
 
   const {
     summary: actSummary,
@@ -206,18 +211,20 @@ function MenteeDashboardInner() {
           </p>
         </div>
 
-        {/* WhatsApp Group links at the top corner */}
-        <div className="w-full md:w-auto flex flex-col gap-2 shrink-0 md:max-w-md">
-          {currentProgramEnrollments
-            .filter((e) => e.clan?.whatsappGroupLink)
-            .map((enrollment) => (
-              <WhatsAppGroupCard
-                key={enrollment.id}
-                enrollment={enrollment}
-                compact
-              />
-            ))}
-        </div>
+        {/* WhatsApp Group links — cohort enrollment only (standing has no enrollment) */}
+        {!standing && (
+          <div className="w-full md:w-auto flex flex-col gap-2 shrink-0 md:max-w-md">
+            {currentProgramEnrollments
+              .filter((e) => e.clan?.whatsappGroupLink)
+              .map((enrollment) => (
+                <WhatsAppGroupCard
+                  key={enrollment.id}
+                  enrollment={enrollment}
+                  compact
+                />
+              ))}
+          </div>
+        )}
       </div>
 
       <div
@@ -443,8 +450,9 @@ function MenteeDashboardInner() {
         </div>
       ) : (
         <>
-          {/* No enrollment yet - placement is admin/invite-driven now */}
-          {enrollments.length === 0 && (
+          {/* No enrollment yet - placement is admin/invite-driven now.
+              Standing clans skip this: the mentee is already placed by clan. */}
+          {!standing && enrollments.length === 0 && (
             <div className="bg-linear-to-br from-brand-50 dark:from-brand-500/10 to-brand-50 dark:to-transparent border border-brand-200 rounded-2xl p-8 text-center">
               <div className="w-16 h-16 bg-brand-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-white" />
@@ -461,7 +469,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Pending Completion - Awaiting Mentor Approval */}
-          {pendingCompletionEnrollments.length > 0 && (
+          {!standing && pendingCompletionEnrollments.length > 0 && (
             <div className="bg-orange-50 border border-orange-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center shrink-0">
@@ -493,7 +501,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Level Completed - Auto-promoted to pending_match */}
-          {levelCompletedEnrollments.length > 0 && (
+          {!standing && levelCompletedEnrollments.length > 0 && (
             <div className="bg-green-50 border border-green-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center shrink-0">
@@ -518,7 +526,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Pending Approvals Alert */}
-          {pendingEnrollments.length > 0 && (
+          {!standing && pendingEnrollments.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
@@ -546,7 +554,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Approved but not matched Alert */}
-          {approvedEnrollments.length > 0 && (
+          {!standing && approvedEnrollments.length > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
@@ -576,7 +584,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Active Programs - one card per in-progress enrollment */}
-          {currentProgramEnrollments.length > 0 && (
+          {!standing && currentProgramEnrollments.length > 0 && (
             <div>
               <h2 className="text-slate-900 mb-4">
                 Active Program{currentProgramEnrollments.length > 1 ? "s" : ""}
@@ -655,7 +663,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Completed Programs - Rate Your Mentor prompt */}
-          {completedEnrollments.length > 0 && (
+          {!standing && completedEnrollments.length > 0 && (
             <div>
               <h2 className="text-slate-900 mb-4">Completed Programs 🎓</h2>
               <div className="grid gap-4 lg:grid-cols-2">
@@ -709,7 +717,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* All Enrollments */}
-          {enrollments.length > 0 && (
+          {!standing && enrollments.length > 0 && (
             <details className="bg-card rounded-2xl border border-slate-200 p-6">
               <summary className="cursor-pointer font-medium mb-4">
                 Enrollment history · {enrollments.length}
@@ -782,10 +790,8 @@ function MenteeDashboardInner() {
 }
 
 export default function MenteeDashboard() {
-  const { menteeClans, menteeActiveClanId } = useClan();
-  const clan = menteeClans.find(c => c.id === menteeActiveClanId);
-  // Standing clans: lightweight home + activity. Frozen cohorts: same dashboard (ClanWorkspaceNotice + disabled actions).
-  if (clan?.kind === 'standing') return <div className="space-y-5"><div className="flex flex-wrap gap-3">{[['/mentee/tasks', 'Your tasks'], ['/mentee/daily-log', 'Daily log'], ['/mentee/blockers', 'Roadblocks'], ['/mentee/meetings', 'Meetings'], ['/mentee/community', 'Community']].map(([href, label]) => <Link key={href} href={href} className="rounded-lg border border-slate-200 bg-card px-4 py-2 text-sm font-medium text-brand-600">{label}</Link>)}</div><RecurringRitualsCard /><StandingClanActivity clanId={clan.id} /></div>;
+  // Standing and cohort clans share the same mentee home — clan scope (X-Active-Clan)
+  // and useMenteeTasks already isolate standing work from completed-cohort enrollments.
   return (
     <Suspense
       fallback={

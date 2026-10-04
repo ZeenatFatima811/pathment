@@ -974,6 +974,13 @@ class CohortService {
     }, {});
 
     const historical = {};
+    // Standing has no program enrollment — drop cohort enrollments so week /
+    // program progress from a completed clan never shapes standing scores.
+    if (scope.standing) {
+      for (const u of allUsers) {
+        if (Array.isArray(u.enrollments)) u.enrollments = [];
+      }
+    }
     return {
       historical,
       scoped: Boolean(scope.programId || scope.clanId || scope.standing),

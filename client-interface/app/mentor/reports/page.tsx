@@ -12,7 +12,6 @@ import { mentorApi } from '@/lib/services/mentor-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { useAuth } from '@/lib/context/AuthContext';
 import { useClan, resolveActiveMentorClan } from '@/lib/context/ClanContext';
-import { StandingClanActivity } from '@/components/shared/StandingClanActivity';
 
 interface PeriodActivity {
   period: 'week' | 'month';
@@ -74,13 +73,7 @@ function MomentumPill({ momentum }: { momentum: CohortMentee['momentum'] }) {
 }
 
 export default function MentorReports() {
-  const { clans, activeClanId } = useClan();
-  const clan = resolveActiveMentorClan(clans, activeClanId);
-  // Standing clans: activity summary. Frozen cohorts: same reports UI (read-only banner elsewhere).
-  if (clan?.kind === 'standing') return <StandingClanActivity clanId={clan.id} />;
-  return <ProgramReports />;
-}
-function ProgramReports() {
+  // Standing and cohort clans share this reports UI; cohort data is clan-scoped via X-Active-Clan.
   const { cohort, totals, loading, error, refetch } = useMentorCohort();
   const { user } = useAuth();
   const { clans, activeClanId } = useClan();

@@ -235,15 +235,18 @@ class PerformanceService {
   async scoreMentees(menteeIds, { clanId = null, programId = null, live = false, asOf = null } = {}) {
     const ids = [...new Set(menteeIds)].filter(Boolean);
     if (!ids.length) return { weights: {}, disabled: [], mentees: [], eligibility: ELIGIBILITY };
+    // Standing clans share a programId with the closed cohort but must never
+    // inherit that program scope — only this clan's own work is scored.
+    let standing = false;
     if (clanId) {
       const clan = await models.Clan.findByPk(clanId);
-      if (clan?.kind === 'standing') return { weights: {}, disabled: [], mentees: [], eligibility: ELIGIBILITY };
-      programId = clan?.programId || programId;
+      if (clan?.kind === 'standing') standing = true;
+      else programId = clan?.programId || programId;
     }
     const bounds = asOfDayEnd(asOf);
     const scope = {
       clanId,
-      programId,
+      ...(standing ? { standing: true } : { programId }),
       ...(bounds ? { asOfEnd: bounds.end, asOfDateKey: bounds.dateKey } : {}),
     };
     // Score live evidence; when asOf is set (program close date), ignore later activity.
