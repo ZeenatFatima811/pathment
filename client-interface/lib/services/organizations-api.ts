@@ -38,7 +38,7 @@ export const organizationsApi = {
   current: () => apiClient.get<{ data: OrganizationOverview }>('/organizations/current').then((r) => r.data),
   mine: () => apiClient.get<{ data: { organizations: OrganizationSummary[] } }>('/organizations/me').then((r) => r.data.organizations),
   plans: () => apiClient.get<{ data: { plans: Plan[] } }>('/organizations/plans').then((r) => r.data.plans),
-  update: (patch: Partial<Pick<OrganizationSummary, 'name' | 'logoUrl' | 'primaryColor' | 'timezone'>>) =>
+  update: (patch: Partial<Pick<OrganizationSummary, 'name' | 'logoUrl' | 'primaryColor' | 'timezone'>> | FormData) =>
     apiClient.patch<{ data: { organization: OrganizationSummary } }>('/organizations/current', patch).then((r) => r.data.organization),
   requestPlan: (planKey: string) => apiClient.post<{ data: { subscription: OrganizationOverview['subscription'] } }>(
     '/organizations/current/plan-request', { planKey },

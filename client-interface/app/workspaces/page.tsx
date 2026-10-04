@@ -32,7 +32,13 @@ export default function WorkspacesPage() {
     {!hasSession ? <Link href="/" className="mt-8 inline-flex rounded-xl bg-brand-600 px-5 py-3 font-medium text-white">Choose your workspace</Link> : <>
       {loading ? <p role="status" className="mt-8 text-muted-foreground">Loading workspaces…</p> : error ? <div role="alert" className="mt-8 rounded-xl border border-border p-5"><p>{error}</p><button onClick={() => void refetch()} className="mt-3 font-medium text-brand-600">Try again</button></div> : <div className="mt-8 space-y-3">
         {workspaces.map(workspace => <button key={workspace.id} onClick={() => switchWorkspace(workspace.slug)} className="flex w-full items-center gap-4 rounded-xl border border-border bg-card p-5 text-left hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500">
-          <Building2 className="h-6 w-6 shrink-0 text-brand-600" aria-hidden="true" />
+          <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-brand-50 text-brand-700">
+            {workspace.logoUrl ? (
+              <img src={workspace.logoUrl} alt="" className="h-full w-full object-cover"/>
+            ) : (
+              <Building2 className="h-5 w-5" aria-hidden="true" />
+            )}
+          </span>
           <span className="min-w-0 flex-1"><span className="block font-semibold text-foreground">{workspace.name}</span><span className="block text-sm text-muted-foreground">/w/{workspace.slug} · {workspace.membershipRole}</span></span>
           <ArrowRight className="h-5 w-5 shrink-0" aria-hidden="true" />
         </button>)}

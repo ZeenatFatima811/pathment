@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+const { uploadToCloudinary, deleteFromCloudinary, extractPublicId } = require('../utils/cloudinaryUpload');
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RESERVED_SLUGS = new Set(['pathment', 'www', 'app', 'api', 'links', 'meet', 'staging', 'status', 'support', 'admin', 'mail', 'cdn', 'assets']);
@@ -222,12 +223,12 @@ class OrganizationService {
     return this.subscription(organizationId);
   }
 
-  async update(userId, organizationId, patch) {
+  async update(userId, organizationId, patch, file=null) {
     const membership = await this.assertMembership(userId, organizationId);
     if (!['owner', 'admin'].includes(membership.role)) throw new ForbiddenError('Organization admin access is required');
     const organization = await models.Organization.findByPk(organizationId);
     if (!organization) throw new NotFoundError('Organization not found');
-    const changesBranding = patch.logoUrl !== undefined || patch.primaryColor !== undefined;
+    const changesBranding = Boolean(file) || patch.logoUrl !== undefined || patch.primaryColor !== undefined;
     if (changesBranding && !(await this.entitlement(organizationId, 'customBranding'))) {
       throw new ForbiddenError('Custom branding is available on the Growth plan and above');
     }
@@ -235,10 +236,28 @@ class OrganizationService {
       try { new Intl.DateTimeFormat('en', { timeZone: patch.timezone }); }
       catch { throw new ValidationError('Choose a valid IANA timezone'); }
     }
+    const oldLogoUrl = organization.logoUrl;
     const allowed = ['name', 'logoUrl', 'primaryColor', 'timezone'];
     for (const key of allowed) if (patch[key] !== undefined) organization[key] = patch[key];
+    if (file) {
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.mimetype) || file.size > 5 * 1024 * 1024) {
+        throw new ValidationError('Choose a PNG, JPG or WebP image up to 5 MB');
+      }
+      const result = await uploadToCloudinary(
+        file.buffer,
+        'pathment/organization-logos',
+        'image'
+      );
+      organization.logoUrl = result.secure_url;
+    }
     if (!organization.name?.trim()) throw new ValidationError('Organization name is required');
     await organization.save();
+    if (file && oldLogoUrl) {
+      const oldPublicId = extractPublicId(oldLogoUrl);
+      if (oldPublicId) {
+        await deleteFromCloudinary(oldPublicId, 'image');
+      }
+    }
     return serializeOrganization(organization, membership);
   }
 

@@ -7,6 +7,7 @@ import { useOrganization } from '@/lib/context/OrganizationContext';
 import { organizationsApi } from '@/lib/services/organizations-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { Drawer } from '@/components/shared/Drawer';
+import { OrganizationAvatarEditor } from '@/components/shared/OrganizationAvatarEditor';
 
 export function OrganizationSettingsTab() {
   const { current, overview, refresh, switchTo } = useOrganization();
@@ -42,6 +43,7 @@ export function OrganizationSettingsTab() {
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-50 text-brand-700"><Building2 className="h-5 w-5" /></span>
         <div><h2 className="font-semibold text-foreground">Organization</h2><p className="text-sm text-muted-foreground">Workspace identity and regional defaults.</p></div>
       </div>
+      <OrganizationAvatarEditor name={current.name} logoUrl={current.logoUrl} onChanged={() => {refresh(); }}/>
       <div className="grid gap-5 md:grid-cols-2">
         <label className="space-y-2"><span className="text-sm font-medium">Name</span><input className={field} value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} /></label>
         <label className="space-y-2"><span className="text-sm font-medium">Workspace URL</span><input className={field} value={`app.pathment.me/w/${current.slug}`} disabled /></label>

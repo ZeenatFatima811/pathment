@@ -23,7 +23,7 @@ const listPlans = catchAsync(async (_req, res) => {
 });
 
 const updateCurrent = catchAsync(async (req, res) => {
-  const organization = await organizationService.update(req.user.id, req.organizationId, req.body || {});
+  const organization = await organizationService.update(req.user.id, req.organizationId, req.body || {}, req.file);
   res.json(successResponse('Organization updated', { organization }));
 });
 

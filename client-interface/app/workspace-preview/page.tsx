@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/services/api-client';
 import { organizationsApi, type Plan } from '@/lib/services/organizations-api';
 import { workspacePath } from '@/lib/services/workspace-scope';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { Building2 } from 'lucide-react';
 
 type Preview = {
   members: { id: string; name: string; workspaceRole: string; clanRoles: string[] }[];
@@ -46,7 +47,21 @@ export default function WorkspacePreviewPage() {
   const button = 'rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50';
   return <main className="mx-auto max-w-5xl space-y-7 px-6 py-10">
     <header className="flex flex-wrap items-center justify-between gap-4">
-      <div><p className="text-sm font-medium text-brand-600">Pathment · Staging</p><h1 className="text-2xl font-bold">{current?.name || 'Workspace preview'}</h1></div>
+      <div className="flex items-center gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-brand-50 text-brand-700">
+          {current?.logoUrl ? (
+            <img src={current.logoUrl} alt="" className="h-full w-full object-cover"/>
+          ) : (
+            <Building2 className="h-5 w-5" aria-hidden="true"/>
+          )}
+        </span>
+        <div>
+          <p className="text-sm font-medium text-brand-600">Pathment · Staging</p>
+            <h1 className="text-2xl font-bold">
+              {current?.name || 'Workspace preview'}
+            </h1>
+        </div>
+        </div>
       {user && <button className={button} onClick={() => void logout()}>Sign out</button>}
     </header>
     <div className="rounded-xl border border-border bg-muted p-4 text-sm">Restricted demo: explore workspace URLs, membership, switching and plans. Teaching, messages, certificates and background jobs are not enabled in these two demo workspaces while isolation work continues.</div>
