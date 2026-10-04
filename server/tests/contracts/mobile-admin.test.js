@@ -25,6 +25,7 @@ const {
   createMentor,
   createMentee,
   createProgram,
+  createEnrollment,
   authHeader,
 } = require('../helpers/seed');
 
@@ -188,6 +189,53 @@ describe('the rewards shelf', () => {
       .send({ giftId: gift.id });
 
     expect(res.status).toBe(400);
+  });
+
+  test('lets a mentee read the shelf, read their balance and claim for themselves', async () => {
+    const mentee = await createMentee({ email: 'reward-mentee@test.com' });
+    await createEnrollment({ menteeId: mentee.id, programId: program.id });
+    const gift = await models.Gift.create({
+      name: 'A notebook', costXp: 0, active: true, createdBy: admin.id,
+    });
+
+    const shelf = await request(app)
+      .get('/api/rewards')
+      .set('Authorization', authHeader(mentee))
+      .set('X-Portal-Role', 'mentee');
+    const balance = await request(app)
+      .get(`/api/rewards/balance/${mentee.id}`)
+      .set('Authorization', authHeader(mentee))
+      .set('X-Portal-Role', 'mentee');
+    const claim = await request(app)
+      .post('/api/rewards/redeem')
+      .set('Authorization', authHeader(mentee))
+      .set('X-Portal-Role', 'mentee')
+      .send({ giftId: gift.id, menteeId: mentee.id });
+
+    expect(shelf.status).toBe(200);
+    expect(shelf.body.data.gifts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: gift.id, costXp: 0 }),
+    ]));
+    expect(shelf.body.data.redemptions).toEqual([]);
+    expect(balance.status).toBe(200);
+    expect(balance.body.data).toEqual({ earned: 0, spent: 0, balance: 0 });
+    expect(claim.status).toBe(201);
+  });
+
+  test('does not let a mentee claim a reward for somebody else', async () => {
+    const mentee = await createMentee({ email: 'claiming-mentee@test.com' });
+    const other = await createMentee({ email: 'other-mentee@test.com' });
+    const gift = await models.Gift.create({
+      name: 'A notebook', costXp: 0, active: true, createdBy: admin.id,
+    });
+
+    const res = await request(app)
+      .post('/api/rewards/redeem')
+      .set('Authorization', authHeader(mentee))
+      .set('X-Portal-Role', 'mentee')
+      .send({ giftId: gift.id, menteeId: other.id });
+
+    expect(res.status).toBe(403);
   });
 });
 

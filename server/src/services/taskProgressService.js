@@ -40,7 +40,9 @@ class TaskProgressService {
    */
   async _ownedTask(menteeId, assignedTaskId) {
     const task = await models.AssignedTask.findByPk(assignedTaskId, {
-      attributes: ['id', 'menteeId', 'clanId', 'status', 'dueDate', 'assignedAt'],
+      // Keep ownership and startedAt loaded because Sequelize's tenant guard
+      // validates ownership again when the status transition is persisted.
+      attributes: ['id', 'organizationId', 'menteeId', 'clanId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
     });
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This task is not yours');
@@ -95,8 +97,7 @@ class TaskProgressService {
 
     // A task with progress on it is in progress, whatever it said before.
     if (task.status === 'assigned') {
-      try { await task.update({ status: 'in_progress', startedAt: task.startedAt || new Date() }); }
-      catch { /* the note matters more than the status flip */ }
+      await task.update({ status: 'in_progress', startedAt: task.startedAt || new Date() });
     }
 
     return this._shape(entry);

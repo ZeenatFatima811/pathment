@@ -68,6 +68,32 @@ function requireMenteeAccess(param = 'id') {
   };
 }
 
+/** The body-field equivalent of requireMenteeAccess, for actions such as rewards. */
+function requireMenteeBodyAccess(field = 'menteeId') {
+  return async (req, res, next) => {
+    try {
+      if (!req.user) throw new AuthenticationError('You must be logged in to access this resource');
+
+      req._assignments = req.loadAssignments
+        ? await req.loadAssignments()
+        : (req._assignments || (await authzService.getAssignments(req.user)));
+
+      const menteeId = req.body && req.body[field];
+      // Leave required-field validation to the controller so malformed input is
+      // a 400, not reported as though a real mentee was outside the caller's scope.
+      if (!menteeId) return next();
+
+      const allowed = await authzService.canViewMentee(req.user, menteeId, {
+        assignments: req._assignments
+      });
+      if (!allowed) throw new AuthorizationError('You do not have access to this mentee');
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
 /**
  * Admit the request when the user holds ANY of the listed permissions at the
  * resolved scope. Same assignment caching as requirePermission.
@@ -186,4 +212,13 @@ const scope = {
     authzService.scopeOfAnnouncementAudience(req.body && req.body.audience, req.body && req.body.audienceId)
 };
 
-module.exports = { requirePermission, requireAnyPermission, requireAddClanMember, requireMenteeAccess, requirePermissionAnyScope, requirePermissionMinScope, scope };
+module.exports = {
+  requirePermission,
+  requireAnyPermission,
+  requireAddClanMember,
+  requireMenteeAccess,
+  requireMenteeBodyAccess,
+  requirePermissionAnyScope,
+  requirePermissionMinScope,
+  scope
+};
