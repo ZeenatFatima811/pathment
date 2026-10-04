@@ -197,30 +197,16 @@ export default function NotificationDrawer({
   const handleMarkAllRead = () => markAllRead();
   const handleDelete = (notificationId: string) => remove(notificationId);
 
-  const findStandingRequest = (id?: string | null) =>
-    pendingStanding.find((r) => r.id === id) || null;
-
-  const beginStandingReview = (
-    row: StandingRequest,
-    decision: "approved" | "rejected",
-    notificationId?: string,
-  ) => {
-    setStandingReview({ row, decision });
-    if (notificationId) handleMarkRead(notificationId);
-  };
-
   const handleNotificationClick = (notification: Notification) => {
-    // Admin standing-clan requests are decided in-drawer; don't bounce to the list page.
+    // Admin standing-clan requests are decided via Approve / Reject on the
+    // pending card above — don't open a second approve step from the feed item.
     if (
       isAdminDrawer &&
       notification.relatedEntityType === "standing_clan_request" &&
       notification.relatedEntityId
     ) {
-      const row = findStandingRequest(notification.relatedEntityId);
-      if (row) {
-        beginStandingReview(row, "approved", notification.id);
-        return;
-      }
+      if (notification.status === "unread") handleMarkRead(notification.id);
+      return;
     }
     if (notification.actionUrl) {
       router.push(workspacePath(notification.actionUrl));
@@ -414,6 +400,10 @@ export default function NotificationDrawer({
                             disabled={!closeoutEnabled}
                             title={!closeoutEnabled ? STANDING_CLAN_UPGRADE_COPY : undefined}
                             onReview={setStandingReview}
+                            onDecided={() => {
+                              void loadPendingStanding();
+                              reload();
+                            }}
                           />
                         </div>
                       </div>

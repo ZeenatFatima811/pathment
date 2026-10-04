@@ -96,7 +96,7 @@ class StandingClanService {
   async decide(requestId, decision, note, actor) {
     if (!await authz.hasAdminAccess(actor)) throw new ForbiddenError('Only an admin can decide standing clan requests');
     if (!['approved', 'rejected'].includes(decision)) throw new ValidationError('Choose approve or reject');
-    if (decision === 'rejected' && !String(note || '').trim()) throw new ValidationError('Explain the rejection so the mentor knows why');
+    // Reject note is optional; when present it is included in the mentor notification.
     const saved = await sequelize.transaction(async transaction => {
       const request = await models.StandingClanRequest.findByPk(requestId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!request) throw new NotFoundError('Request not found');
@@ -120,7 +120,7 @@ class StandingClanService {
 
   async _notifyMentorDecision(request) {
     const approved = request.status === 'approved';
-    const note = request.decisionNote ? ` Note: ${request.decisionNote}` : '';
+    const reason = request.decisionNote ? ` Reason: ${request.decisionNote}` : '';
     try {
       await notificationOrchestrator.dispatch({
         eventKey: NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED,
@@ -129,7 +129,7 @@ class StandingClanService {
           title: approved ? 'Standing clan approved' : 'Standing clan request rejected',
           message: approved
             ? `Your standing clan "${request.name}" was approved. Open Clan team to choose mentees.`
-            : `Your standing clan request "${request.name}" was not approved.${note}`,
+            : `Your standing clan request "${request.name}" was not approved.${reason}`,
           actionUrl: approved && request.createdClanId ? '/mentor/clan-team' : '/mentor/dashboard',
           actionLabel: approved ? 'Open clan team' : 'View cockpit',
           relatedEntityType: approved ? 'clan' : 'standing_clan_request',
