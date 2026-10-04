@@ -3,6 +3,7 @@ const { models, sequelize } = require('../db');
 const { ForbiddenError, NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
 const { PERMISSIONS } = require('../config/permissions');
 const authz = require('./authzService');
+const performanceService = require('./performanceService');
 
 const ACTIVE = ['approved', 'pending_match', 'matched', 'active', 'pending_completion', 'level_completed', 'program_completed', 'dropped'];
 
@@ -136,9 +137,9 @@ class ProgramLifecycleService {
         groups.get(key).push(enrollment);
       }
       for (const group of groups.values()) {
-        const scores = await require('./performanceService').scoreMentees(
+        const scores = await performanceService.scoreMentees(
           group.map(e => e.menteeId),
-          { programId, transaction, live: true },
+          { programId, transaction, live: true, asOf: closedAt },
         );
         for (const enrollment of group) {
           const status = enrollmentStatusAtClose(enrollment);
@@ -206,7 +207,10 @@ class ProgramLifecycleService {
     }
     let scoreByMentee = new Map();
     if (program.closedAt && menteeIds.length) {
-      const scored = await require('./performanceService').scoreMentees(menteeIds, { programId, live: true });
+      // Final results are frozen to the close date — ignore activity after closedAt.
+      const scored = await performanceService.scoreMentees(
+        menteeIds, { programId, live: true, asOf: program.closedAt },
+      );
       for (const m of scored.mentees) scoreByMentee.set(m.id, m);
     }
     const rankByMentee = new Map();

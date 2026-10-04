@@ -871,8 +871,9 @@ class CohortService {
     const inIds = { [Op.in]: ids };
     const taskFilter = this.taskFilterForScope(scope);
     const clanFilter = this.clanFilterForScope(scope);
+    const asOfEndMs = scope.asOfEnd ? new Date(scope.asOfEnd).getTime() : null;
 
-    const [allUsers, allTasks, allDelays, allBlockers] = await Promise.all([
+    const [allUsers, loadedTasks, allDelays, allBlockers] = await Promise.all([
       models.User.findAll({
         where: { id: inIds },
         attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl'],
@@ -888,8 +889,12 @@ class CohortService {
         ]
       }),
       models.AssignedTask.findAll({
-        where: { menteeId: inIds, ...taskFilter },
-        attributes: ['id', 'status', 'isLate', 'completedAt', 'submittedAt', 'startedAt', 'finalRating', 'dueDate', 'menteeId', 'enrollmentId', 'pointsAwarded'],
+        where: {
+          menteeId: inIds,
+          ...taskFilter,
+          ...(asOfEndMs != null ? { assignedAt: { [Op.lte]: scope.asOfEnd } } : {}),
+        },
+        attributes: ['id', 'status', 'isLate', 'completedAt', 'submittedAt', 'startedAt', 'finalRating', 'dueDate', 'menteeId', 'enrollmentId', 'pointsAwarded', 'assignedAt'],
         include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['difficulty', 'type'], required: false }]
       }),
       models.DelayEvent.findAll({
@@ -902,12 +907,40 @@ class CohortService {
       })
     ]);
 
+    // When scoring as-of a close date, strip completions/submissions that happened after that day.
+    const allTasks = asOfEndMs == null ? loadedTasks : loadedTasks.map((t) => {
+      const completedMs = t.completedAt ? new Date(t.completedAt).getTime() : null;
+      if (t.status === 'completed' && completedMs != null && completedMs > asOfEndMs) {
+        const plain = t.get({ plain: true });
+        return {
+          ...plain,
+          status: t.startedAt || t.submittedAt ? 'in_progress' : 'assigned',
+          completedAt: null,
+          finalRating: null,
+          pointsAwarded: 0,
+          isLate: false,
+        };
+      }
+      const submittedMs = t.submittedAt ? new Date(t.submittedAt).getTime() : null;
+      if (submittedMs != null && submittedMs > asOfEndMs && ['submitted', 'under_review', 'revision_needed'].includes(t.status)) {
+        const plain = t.get({ plain: true });
+        return {
+          ...plain,
+          status: t.startedAt ? 'in_progress' : 'assigned',
+          submittedAt: null,
+        };
+      }
+      return t;
+    });
+
     // Most-recent attendance per mentee (same filter/order as _lastAttendance).
     const attendance = {};
     if (models.CohortReviewEntry && models.CohortReviewSession) {
+      const sessionWhere = { ...clanFilter };
+      if (scope.asOfDateKey) sessionWhere.sessionDate = { [Op.lte]: scope.asOfDateKey };
       const entries = await models.CohortReviewEntry.findAll({
         where: { menteeId: inIds, attendance: { [Op.ne]: null } },
-        include: [{ model: models.CohortReviewSession, as: 'session', attributes: ['sessionDate'], required: true, where: clanFilter }],
+        include: [{ model: models.CohortReviewSession, as: 'session', attributes: ['sessionDate'], required: true, where: sessionWhere }],
         order: [['menteeId', 'ASC'], [{ model: models.CohortReviewSession, as: 'session' }, 'session_date', 'DESC']]
       });
       for (const e of entries) {
