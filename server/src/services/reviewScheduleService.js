@@ -11,6 +11,7 @@ const cfg = require('../config/reviewMeeting');
 const { nextOccurrences } = require('../utils/reviewRecurrence');
 const { buildEventIcs } = require('../utils/ics');
 const { renderEmail, plainText } = require('../utils/emailTemplate');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * reviewScheduleService — recurring cohort reviews.
@@ -65,6 +66,7 @@ class ReviewScheduleService {
     const { clanId, title, dayOfWeek, timeLocal, timezone, intervalWeeks = 1, durationMinutes = 60, startsOn, endsOn = null } = input;
     if (!clanId) throw new ValidationError('clanId is required');
     await this._assertMentorsClan(mentorId, clanId);
+    await clanLifecycleService.assertClanWritable(clanId);
     if (!(dayOfWeek >= 0 && dayOfWeek <= 6)) throw new ValidationError('dayOfWeek must be 0–6');
     if (!/^\d{2}:\d{2}$/.test(String(timeLocal || ''))) throw new ValidationError('timeLocal must be HH:mm');
     if (!VALID_TZ(timezone)) {
@@ -115,6 +117,7 @@ class ReviewScheduleService {
     const schedule = await models.ReviewSchedule.findByPk(scheduleId);
     if (!schedule) throw new NotFoundError('Schedule not found');
     await this._assertMentorsClan(mentorId, schedule.clanId);
+    await clanLifecycleService.assertClanWritable(schedule.clanId);
     await schedule.update({ active: false });
     // Drop FUTURE occurrences that haven't opened yet (leave past/live ones alone).
     await models.CohortReviewSession.update(

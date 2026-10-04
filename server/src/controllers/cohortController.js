@@ -141,7 +141,7 @@ const nudge = catchAsync(async (req, res) => {
   if (!menteeId) {
     return res.status(400).json({ success: false, message: 'menteeId is required', statusCode: 400 });
   }
-  const result = await cohortService.sendNudge(req.user.id, menteeId, message);
+  const result = await cohortService.sendNudge(req.user.id, menteeId, message, requestedClanId(req));
   res.status(200).json(successResponse('Nudge sent', result));
 });
 
@@ -161,7 +161,7 @@ const getMyProgress = catchAsync(async (req, res) => {
  * PATCH /api/mentor/mentee/:id/personality  { consistency, communication, resilience, independence }
  */
 const updatePersonality = catchAsync(async (req, res) => {
-  const personality = await cohortService.updatePersonality(req.params.id, req.body);
+  const personality = await cohortService.updatePersonality(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(200).json(successResponse('Personality updated', { personality }));
 });
 
@@ -169,7 +169,7 @@ const updatePersonality = catchAsync(async (req, res) => {
  * POST /api/mentor/mentee/:id/insights  { kind, note, source }
  */
 const addInsight = catchAsync(async (req, res) => {
-  const insight = await cohortService.addInsight(req.params.id, req.body, req.user.id);
+  const insight = await cohortService.addInsight(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('Insight logged', { insight }, 201));
 });
 
@@ -177,25 +177,25 @@ const addInsight = catchAsync(async (req, res) => {
  * POST /api/mentor/mentee/:id/notes  { date?, kind?, summary, sentiment?, issues?, nextSteps? }
  */
 const logMeetingNote = catchAsync(async (req, res) => {
-  const note = await cohortService.logMeetingNote(req.params.id, req.body, req.user.id);
+  const note = await cohortService.logMeetingNote(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('1:1 logged', { note }, 201));
 });
 
 /** POST /api/mentor/mentee/:id/collaborators  { name, role, email? } */
 const addCollaborator = catchAsync(async (req, res) => {
-  const collaborator = await cohortService.addCollaborator(req.params.id, req.body, req.user.id);
+  const collaborator = await cohortService.addCollaborator(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('Collaborator invited', { collaborator }, 201));
 });
 
 /** DELETE /api/mentor/mentee/:id/collaborators/:collaboratorId */
 const removeCollaborator = catchAsync(async (req, res) => {
-  const result = await cohortService.removeCollaborator(req.params.id, req.params.collaboratorId);
+  const result = await cohortService.removeCollaborator(req.params.id, req.params.collaboratorId, req.user.id, requestedClanId(req));
   res.status(200).json(successResponse('Collaborator removed', result));
 });
 
 /** POST /api/mentor/mentee/:id/attendance  { status } — cohort-review attendance. */
 const setAttendance = catchAsync(async (req, res) => {
-  const result = await cohortService.setAttendance(req.params.id, req.user.id, req.body.status);
+  const result = await cohortService.setAttendance(req.params.id, req.user.id, req.body.status, requestedClanId(req));
   res.status(200).json(successResponse('Attendance saved', result));
 });
 

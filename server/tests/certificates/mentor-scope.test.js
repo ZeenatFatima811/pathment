@@ -10,10 +10,6 @@
  * AI evaluation they kicked off graded the whole organisation: the progress bar
  * read "0 / 623" for someone responsible for a dozen people.
  *
- * The same mistake, in the other direction, meant the delete and revoke guards
- * (`if (user.role === 'mentor')`) never matched for that person and were
- * skipped entirely.
- *
  * Scope is derived from the permission they actually hold at a clan now, and
  * the default is CLOSED: no clans means no mentees, never everybody.
  */
@@ -169,19 +165,24 @@ describe('certificate scope for mentors and co-mentors', () => {
       });
     });
 
-    it('refuses a mentor another clan\'s certificate', async () => {
+    it('refuses a lead mentor because revocation is an admin action', async () => {
       await expect(certificateService.deleteCertificateInstance(otherInstance.id, lead))
-        .rejects.toThrow(/only revoke certificates for mentees in your clan/i);
+        .rejects.toThrow(/only an admin can revoke/i);
     });
 
-    it('refuses a promoted co-mentor, whose guard used to be skipped entirely', async () => {
+    it('refuses a promoted co-mentor too', async () => {
       await expect(certificateService.deleteCertificateInstance(otherInstance.id, promotedCoMentor))
-        .rejects.toThrow(/only revoke/i);
+        .rejects.toThrow(/only an admin can revoke/i);
       expect(await models.CertificateInstance.findByPk(otherInstance.id)).not.toBeNull();
     });
 
-    it('lets the outsider who owns that clan revoke it', async () => {
-      await expect(certificateService.deleteCertificateInstance(otherInstance.id, outsider)).resolves.toBe(true);
+    it('does not let a lead mentor revoke even within their own clan', async () => {
+      await expect(certificateService.deleteCertificateInstance(otherInstance.id, outsider))
+        .rejects.toThrow(/only an admin can revoke/i);
+    });
+
+    it('lets an admin revoke it', async () => {
+      await expect(certificateService.deleteCertificateInstance(otherInstance.id, admin)).resolves.toBe(true);
     });
   });
 

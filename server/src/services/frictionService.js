@@ -3,6 +3,7 @@ const authzService = require('./authzService');
 const { PERMISSIONS: P } = require('../config/permissions');
 const { resolveMenteeClanId } = require('./menteeClanScope');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
+const clanLifecycleService = require('./clanLifecycleService');
 
 // Grace window for a mentee to delete a friction record they logged. Long
 // enough to undo an accidental/duplicate entry, short enough that nobody can
@@ -140,9 +141,11 @@ class FrictionService {
     const title = typeof data.title === 'string' ? data.title.trim() : '';
     if (!title) throw new ValidationError('title is required');
     if (title.length > 5000) throw new ValidationError('That blocker note is too long — please keep it under 5000 characters.');
+    const clanId = await this.clanFor(data, createdBy);
+    await clanLifecycleService.assertClanWritable(clanId);
     return models.Blocker.create({
       menteeId,
-      clanId: await this.clanFor(data, createdBy),
+      clanId,
       assignedTaskId: data.assignedTaskId || null,
       title,
       category: data.category || 'technical',
@@ -156,6 +159,7 @@ class FrictionService {
     const blocker = await models.Blocker.findByPk(id);
     if (!blocker) throw new NotFoundError('Blocker not found');
     await this.#assertCanAccessFriction(currentUser, blocker);
+    await clanLifecycleService.assertClanWritable(blocker.clanId);
     blocker.status = 'resolved';
     blocker.resolvedAt = new Date();
     await blocker.save();
@@ -174,6 +178,7 @@ class FrictionService {
     const blocker = await models.Blocker.findByPk(id);
     if (!blocker) throw new NotFoundError('Blocker not found');
     await this.#assertCanAccessFriction(currentUser, blocker);
+    await clanLifecycleService.assertClanWritable(blocker.clanId);
     const ownRecord = currentUser.id === blocker.menteeId;
     if (ownRecord && !(await authzService.hasAdminAccess(currentUser))) {
       const age = Date.now() - new Date(blocker.openedAt || blocker.createdAt).getTime();
@@ -212,8 +217,10 @@ class FrictionService {
     const { reason, menteeId } = data;
     await this.#assertCanAccessMentee(currentUser, menteeId);
     if (!reason) throw new ValidationError('reason is required');
+    const clanId = await this.clanFor(data, createdBy);
+    await clanLifecycleService.assertClanWritable(clanId);
     return models.DelayEvent.create({
-      clanId: await this.clanFor(data, createdBy),
+      clanId,
       menteeId,
       assignedTaskId: data.assignedTaskId || null,
       reason,
@@ -230,6 +237,7 @@ class FrictionService {
     const delay = await models.DelayEvent.findByPk(id);
     if (!delay) throw new NotFoundError('Delay event not found');
     await this.#assertCanAccessFriction(currentUser, delay);
+    await clanLifecycleService.assertClanWritable(delay.clanId);
     await this.#assertNotSelfReview(currentUser, delay.menteeId);
     delay.accepted = accepted;
     if (category) delay.category = category;
@@ -247,6 +255,7 @@ class FrictionService {
     const delay = await models.DelayEvent.findByPk(id);
     if (!delay) throw new NotFoundError('Delay event not found');
     await this.#assertCanAccessFriction(currentUser, delay);
+    await clanLifecycleService.assertClanWritable(delay.clanId);
     await this.#assertNotSelfReview(currentUser, delay.menteeId);
     if (delay.accepted) {
       throw new ValidationError('This delay was already accepted and credited — it can no longer be rejected.');

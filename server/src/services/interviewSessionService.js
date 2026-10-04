@@ -7,6 +7,7 @@ const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const authzService = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const submissionService = require('./submissionService');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * InterviewSessionService — the candidate runner (Phase 2). Owns starting/resuming
@@ -147,6 +148,7 @@ class InterviewSessionService {
    */
   async startQuestion(sessionId, menteeId, questionId) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
 
     const question = await models.InterviewQuestion.findByPk(questionId);
@@ -182,6 +184,7 @@ class InterviewSessionService {
 
   /** Start a fresh attempt or resume the in-progress one. Enforces retake rules. */
   async startOrResume(taskId, menteeId, { clanId = null } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const { assignment } = await this._loadContext(taskId, menteeId, { clanId });
 
     const existing = await models.InterviewSession.findOne({
@@ -256,6 +259,7 @@ class InterviewSessionService {
    */
   async saveAnswer(sessionId, menteeId, questionId, payload = {}) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
 
     // During a mentor-requested redo, only the flagged questions may be re-answered.
@@ -308,6 +312,7 @@ class InterviewSessionService {
    *  just-submitted session too, so a background/retry upload isn't lost. */
   async attachAudio(sessionId, menteeId, questionId, file) {
     const session = await this._ownedSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
     if (!file || !file.buffer) throw new ValidationError('No audio file received');
 
@@ -350,6 +355,7 @@ class InterviewSessionService {
   /** Append proctor events (focus-loss, fullscreen-exit, paste, snapshot refs). */
   async logProctorEvents(sessionId, menteeId, events = []) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!Array.isArray(events) || !events.length) return { logged: 0 };
     const clean = events
       .filter((e) => e && typeof e.type === 'string')
@@ -365,6 +371,7 @@ class InterviewSessionService {
    */
   async attachSnapshot(sessionId, menteeId, file, questionId = null) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!file || !file.buffer) throw new ValidationError('No snapshot received');
     const result = await uploadToCloudinary(file.buffer, 'pathment/interviews/snapshots', 'image');
     const meta = { url: result.secure_url, publicId: result.public_id };
@@ -506,6 +513,7 @@ class InterviewSessionService {
 
   /** Save a per-answer grade (mentor). Creates the answer row if the mentee skipped it. */
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -537,6 +545,7 @@ class InterviewSessionService {
   /** Delete the proctor snapshot images only (mentor). Strips them from the log
    *  and best-effort removes the files from Cloudinary; behavior flags are kept. */
   async deleteSnapshots(taskId, mentorId) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -561,6 +570,7 @@ class InterviewSessionService {
   /** Flag (or clear the flag on) an interview for follow-up (mentor). Stored on
    *  the session meta so it survives and is visible on the review. */
   async setFlag(taskId, mentorId, { flagged, reason } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -591,6 +601,7 @@ class InterviewSessionService {
    * independent of the full-retake setting.
    */
   async requestRedo(taskId, mentorId, { questionIds = [], note } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -648,6 +659,7 @@ class InterviewSessionService {
    * answer; the mentor still decides.
    */
   async aiDraftAnswer(taskId, mentorId, questionId) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -725,6 +737,7 @@ class InterviewSessionService {
    * the mentor still sets the final score (the client applies these as drafts).
    */
   async aiDraftAll(taskId, mentorId, { questionIds } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -848,6 +861,7 @@ class InterviewSessionService {
    * fits the difficulty-based points economy.
    */
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
@@ -880,6 +894,7 @@ class InterviewSessionService {
    */
   async submit(sessionId, menteeId) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     const task = await models.AssignedTask.findByPk(session.assignedTaskId);
     if (!task) throw new NotFoundError('Task not found');
 

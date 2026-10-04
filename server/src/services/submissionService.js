@@ -10,6 +10,7 @@ const mentorshipPauseService = require('./mentorshipPauseService');
 const { PERMISSIONS } = require('../config/permissions');
 const { pointsForDifficulty } = require('../config/points');
 const { toStringList, toBoolean } = require('../utils/multipartFields');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /** Standard points for a submission's task, derived solely from difficulty. */
 function taskStandardPoints(task) {
@@ -35,6 +36,7 @@ class SubmissionService {
    * Submit task with files and rich text content
    */
   async submitTaskWithFiles(taskId, menteeId, submissionData, files = []) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId, {
       include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['type'] }],
     });
@@ -191,6 +193,7 @@ class SubmissionService {
    * Request extension for a task
    */
   async requestExtension(taskId, menteeId, extensionData) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
 
     if (!task) {
@@ -268,6 +271,7 @@ class SubmissionService {
     if (!submission) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     if (!(await authzService.canActOnTask(mentorId, submission.assignedTask, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to act on this task');
@@ -368,6 +372,7 @@ class SubmissionService {
     if (!submission) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     const task = submission.assignedTask;
 
@@ -590,6 +595,7 @@ class SubmissionService {
     if (!submission) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     if (submission.status !== 'approved' && submission.status !== 'revision_needed') {
       throw new ValidationError('Only a reviewed submission can be edited');

@@ -45,12 +45,18 @@ describe('formal completion and independent standing clans', () => {
   }));
 
   it('closes exactly once, freezes cohort clans, and exposes final results from enrollments', () => within(async () => {
-    await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Before close', type: 'exercise' }, mentor.id);
+    const historicalTask = await tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'Before close', type: 'exercise' }, mentor.id);
+    const historicalPost = await community.createPost(sara, { scopeType: 'clan', scopeId: original.id, body: 'Before close' });
+    const historicalSchedule = await require('../../src/services/reviewScheduleService').createSchedule(mentor.id, {
+      clanId: original.id, title: 'Before close', dayOfWeek: new Date().getUTCDay(), timeLocal: '23:59',
+      timezone: 'UTC', startsOn: new Date().toISOString().slice(0, 10),
+    });
     const [a, b] = await Promise.all([lifecycle.closeProgram(alpha.id, admin), lifecycle.closeProgram(alpha.id, admin)]);
     expect(a.id).toBe(b.id);
     expect((await alpha.reload()).closedAt).toBeTruthy();
     expect((await cohort.reload()).status).toBe('completed');
     expect((await original.reload()).frozenAt).toBeTruthy();
+    expect((await historicalSchedule.reload()).active).toBe(false);
     const enrollment = await models.Enrollment.findOne({ where: { menteeId: sara.id, programId: alpha.id } });
     expect(enrollment.status).toBe('program_completed');
     expect(enrollment.completedAt).toBeTruthy();
@@ -61,6 +67,21 @@ describe('formal completion and independent standing clans', () => {
     expect(row.tier).toBe('gold');
     expect(row.performance.parts).toBeDefined();
     await expect(clans.addMember(original.id, { userId: bilal.id, role: 'mentee' })).rejects.toThrow(/historical/);
+    await expect(tasks.createCustomTask({ menteeId: sara.id, clanId: original.id, title: 'After close', type: 'exercise' }, mentor.id))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(require('../../src/services/submissionService').submitTaskWithFiles(historicalTask.id, sara.id, { submissionText: 'After close' }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(require('../../src/services/taskProgressService').log(sara.id, historicalTask.id, { note: 'After close', minutesSpent: 10 }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(community.createPost(sara, { scopeType: 'clan', scopeId: original.id, body: 'After close' }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(community.listComments(sara, historicalPost.id)).resolves.toEqual([]);
+    await expect(community.addComment(sara, historicalPost.id, { body: 'After close' }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(require('../../src/services/frictionService').createBlocker({ menteeId: sara.id, clanId: original.id, title: 'After close' }, sara.id, sara))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    await expect(require('../../src/services/dailyLogService').upsert(sara.id, { clanId: original.id, dateKey: '2026-10-04', note: 'After close' }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
     await expect(community.createPost(sara, { scopeType: 'program', scopeId: alpha.id, body: 'Still open' })).resolves.toBeTruthy();
   }));
 
@@ -137,10 +158,8 @@ describe('formal completion and independent standing clans', () => {
     const report = await standing.activity(clanId, { period: 'joined' }, mentor);
     expect(report.mentees.find(m => m.id === bilal.id)).toMatchObject({ dailyLogs: 1, blockersRaised: 1 });
     expect((await performance.scoreMentees([bilal.id], { programId: beta.id })).mentees[0].evidence.tasksCompleted).toBe(0);
-    const frozenSchedule = await reviews.createSchedule(mentor.id, { ...recurrence, clanId: original.id });
-    expect(frozenSchedule).toBeTruthy();
-    const frozenSessions = await models.CohortReviewSession.count({ where: { reviewScheduleId: frozenSchedule.id } });
-    expect(frozenSessions).toBe(0);
+    await expect(reviews.createSchedule(mentor.id, { ...recurrence, clanId: original.id }))
+      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
   }));
 
   it('retains a recorded dropped outcome for enrollments already marked dropped', () => within(async () => {

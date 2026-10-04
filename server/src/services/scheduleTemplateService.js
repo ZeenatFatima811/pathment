@@ -4,6 +4,7 @@ const { NotFoundError, ValidationError } = require('../utils/errors/errorTypes')
 const { normalizeTaskSchedule } = require('../utils/taskSchedule');
 const linearRoadmapService = require('./linearRoadmapService');
 const { resolveMenteeClanId, listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * scheduleTemplateService - reusable day-shape templates + per-mentee filled
@@ -161,6 +162,7 @@ class ScheduleTemplateService {
     for (const menteeId of menteeIds) {
       const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: assignedBy });
       if (!resolvedClanId) throw new ValidationError('Mentee has no clan membership to attach this schedule to');
+      await clanLifecycleService.assertClanWritable(resolvedClanId);
       let ms = await models.MenteeSchedule.findOne({ where: { menteeId, clanId: resolvedClanId } });
       if (!ms) {
         const memberships = await listMenteeClans(menteeId);
@@ -254,8 +256,9 @@ class ScheduleTemplateService {
 
   /** Fill/clear one slot: kind 'roadmap' (roadmapChain) | 'recurring' (recurring) | 'empty'. */
   async updateSlot(menteeId, slotId, patch, mentorId = null, clanId = null) {
-    const { ms } = await this._findSchedule(menteeId, clanId, mentorId);
+    const { ms, clanId: resolvedClanId } = await this._findSchedule(menteeId, clanId, mentorId);
     if (!ms) throw new NotFoundError('Mentee has no schedule assigned');
+    await clanLifecycleService.assertClanWritable(resolvedClanId);
     const schedule = Array.isArray(ms.schedule) ? ms.schedule : [];
     let idx = schedule.findIndex((s, i) => (s.id || slug(s.label) || `block-${i}`) === slotId);
     if (idx === -1 && /^(slot|block)-\d+$/.test(slotId)) {

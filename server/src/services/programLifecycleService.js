@@ -124,7 +124,7 @@ class ProgramLifecycleService {
       if (!program) throw new NotFoundError('Program not found');
       if (program.closedAt) return program;
 
-      await models.Clan.findAll({
+      const cohortClans = await models.Clan.findAll({
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],
       });
       const { enrollments } = await this.decisions(programId, transaction);
@@ -158,6 +158,24 @@ class ProgramLifecycleService {
       }
 
       await models.Clan.update({ frozenAt: closedAt }, { where: { programId, kind: 'cohort' }, transaction });
+      const cohortClanIds = cohortClans.map(clan => clan.id);
+      if (cohortClanIds.length) {
+        await models.ReviewSchedule.update(
+          { active: false },
+          { where: { clanId: { [Op.in]: cohortClanIds }, active: true }, transaction },
+        );
+        await models.CohortReviewSession.update(
+          { status: 'finished', meetingEndedAt: closedAt },
+          {
+            where: {
+              clanId: { [Op.in]: cohortClanIds },
+              scheduledAt: { [Op.gt]: closedAt },
+              meetingStartedAt: null,
+            },
+            transaction,
+          },
+        );
+      }
       await models.Cohort.update({ status: 'completed' }, { where: { programId }, transaction });
       await program.update({ status: 'completed', closedAt }, { transaction });
       transaction.afterCommit(() => require('./clanHealthService').invalidate());

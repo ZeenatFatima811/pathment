@@ -2,6 +2,7 @@ const { models } = require('../db');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const { todayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /** How long after its day an entry stays editable. */
 const EDIT_WINDOW_HOURS = 48;
@@ -40,30 +41,12 @@ class TaskProgressService {
    */
   async _ownedTask(menteeId, assignedTaskId) {
     const task = await models.AssignedTask.findByPk(assignedTaskId, {
-      attributes: ['id', 'menteeId', 'clanId', 'enrollmentId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
+      // organizationId: tenant guard; enrollmentId: frozen-program fallback when clanId is null.
+      attributes: ['id', 'organizationId', 'menteeId', 'clanId', 'enrollmentId', 'status', 'dueDate', 'assignedAt', 'startedAt'],
     });
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This task is not yours');
     return task;
-  }
-
-  /** Cohort clans freeze on formal program close — standing clans stay writable. */
-  async _assertWritable(task) {
-    if (task.clanId) {
-      const clan = await models.Clan.findByPk(task.clanId, { attributes: ['kind', 'frozenAt'] });
-      if (clan && clan.kind !== 'standing' && clan.frozenAt) {
-        throw new ForbiddenError('Completed programs are read-only');
-      }
-      return;
-    }
-    if (!task.enrollmentId) return;
-    const enrollment = await models.Enrollment.findByPk(task.enrollmentId, {
-      attributes: ['id'],
-      include: [{ model: models.Program, as: 'program', attributes: ['closedAt'] }],
-    });
-    if (enrollment?.program?.closedAt) {
-      throw new ForbiddenError('Completed programs are read-only');
-    }
   }
 
   /**
@@ -80,7 +63,7 @@ class TaskProgressService {
     }
 
     const task = await this._ownedTask(menteeId, assignedTaskId);
-    await this._assertWritable(task);
+    await clanLifecycleService.assertTaskWritable(task);
     // Nothing to log on work that is already finished or was never started.
     if (['completed', 'cancelled'].includes(task.status)) {
       throw new ValidationError('This task is closed, so there is no progress to add');
@@ -115,8 +98,7 @@ class TaskProgressService {
 
     // A task with progress on it is in progress, whatever it said before.
     if (task.status === 'assigned') {
-      try { await task.update({ status: 'in_progress', startedAt: task.startedAt || new Date() }); }
-      catch { /* the note matters more than the status flip */ }
+      await task.update({ status: 'in_progress', startedAt: task.startedAt || new Date() });
     }
 
     return this._shape(entry);
@@ -226,7 +208,7 @@ class TaskProgressService {
    */
   async remove(menteeId, assignedTaskId, dateKey) {
     const task = await this._ownedTask(menteeId, assignedTaskId);
-    await this._assertWritable(task);
+    await clanLifecycleService.assertTaskWritable(task);
     const entry = await models.TaskProgressEntry.findOne({ where: { assignedTaskId, dateKey } });
     if (!entry) throw new NotFoundError('No progress logged for that day');
 

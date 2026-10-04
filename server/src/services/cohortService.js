@@ -11,6 +11,8 @@ const { PERMISSIONS: P } = require('../config/permissions');
 const { NotFoundError, ValidationError } = require('../utils/errors/errorTypes');
 const { requireWorkspaceId } = require('../utils/workspaceExecution');
 const logger = require('../utils/logger');
+const { resolveMenteeClanId } = require('./menteeClanScope');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * cohortService - assembles a mentor's cohort for the Cockpit on real data,
@@ -44,6 +46,11 @@ const ACTIVE_ENROLLMENT_STATUSES = [
 ];
 
 class CohortService {
+  async _assertMenteeClanWritable(menteeId, clanId = null, actorId = null) {
+    const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId });
+    await clanLifecycleService.assertClanWritable(resolvedClanId);
+    return resolvedClanId;
+  }
   /** Resolve the distinct mentee userIds a mentor is responsible for. */
   /**
    * Clans a mentor runs (id → name) from ALL sources — membership, scoped role
@@ -636,7 +643,8 @@ class CohortService {
    * Send a gentle nudge to a mentee (in-app notification). Used from the
    * At-Risk view for someone going quiet.
    */
-  async sendNudge(mentorId, menteeId, message) {
+  async sendNudge(mentorId, menteeId, message, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, mentorId);
     const mentee = await models.User.findByPk(menteeId, { attributes: ['id', 'firstName'] });
     if (!mentee) throw new NotFoundError('Mentee not found');
 
@@ -660,7 +668,8 @@ class CohortService {
   }
 
   /** Set a mentee's working-style read (0-100 dims). */
-  async updatePersonality(menteeId, dims = {}) {
+  async updatePersonality(menteeId, dims = {}, actorId = null, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, actorId);
     const profile = await models.MenteeProfile.findOne({ where: { userId: menteeId } });
     if (!profile) throw new NotFoundError('Mentee profile not found');
     const clampDim = (v) => (v == null ? null : clamp(Math.round(Number(v) || 0), 0, 100));
@@ -679,7 +688,8 @@ class CohortService {
   }
 
   /** Invite a specialist collaborator to a mentee. */
-  async addCollaborator(menteeId, { name, role, email }, invitedBy) {
+  async addCollaborator(menteeId, { name, role, email }, invitedBy, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, invitedBy);
     if (!name || !name.trim() || !role || !role.trim()) throw new ValidationError('name and role are required');
     return models.Collaborator.create({
       menteeId,
@@ -691,7 +701,8 @@ class CohortService {
     });
   }
 
-  async removeCollaborator(menteeId, collaboratorId) {
+  async removeCollaborator(menteeId, collaboratorId, actorId = null, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, actorId);
     const collab = await models.Collaborator.findOne({ where: { id: collaboratorId, menteeId } });
     if (!collab) throw new NotFoundError('Collaborator not found');
     await collab.destroy();
@@ -699,7 +710,8 @@ class CohortService {
   }
 
   /** Log a 1:1 (or standup/review/pairing) note about a mentee. */
-  async logMeetingNote(menteeId, data, mentorId) {
+  async logMeetingNote(menteeId, data, mentorId, clanId = null) {
+    const resolvedClanId = await this._assertMenteeClanWritable(menteeId, clanId, mentorId);
     if (!data.summary || !data.summary.trim()) throw new ValidationError('summary is required');
 
     const workingStyle = this._sanitizeWorkingStyle(data.workingStyle);
@@ -738,6 +750,7 @@ class CohortService {
     if (blockerTitles.length) {
       await models.Blocker.bulkCreate(blockerTitles.map((title) => ({
         menteeId,
+        clanId: resolvedClanId,
         title: title.slice(0, 255),
         category: 'technical',
         severity: 'medium',
@@ -783,7 +796,8 @@ class CohortService {
    * note per mentor+mentee per day carries the attendance, so re-marking just
    * updates it (and it shows on the mentee's timeline). Returns { menteeId, attendance }.
    */
-  async setAttendance(menteeId, mentorId, status) {
+  async setAttendance(menteeId, mentorId, status, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, mentorId);
     if (!['present', 'absent', 'excused'].includes(status)) throw new ValidationError('invalid attendance status');
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const existing = await models.MeetingNote.findOne({
@@ -816,7 +830,8 @@ class CohortService {
   }
 
   /** Log a mentor insight/observation about a mentee. */
-  async addInsight(menteeId, { kind, note, source }, createdBy) {
+  async addInsight(menteeId, { kind, note, source }, createdBy, clanId = null) {
+    await this._assertMenteeClanWritable(menteeId, clanId, createdBy);
     if (!note || !note.trim()) throw new ValidationError('note is required');
     return models.Insight.create({
       menteeId,
