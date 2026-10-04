@@ -181,7 +181,7 @@ class ProgramController {
    * @access Admin
    */
   closeProgram = catchAsync(async (req, res) => {
-    const program = await programLifecycleService.closeProgram(req.params.id, req.user);
+    const program = await programLifecycleService.closeProgram(req.params.id, req.user, req.body || {});
     res.status(200).json(successResponse('Program closed', program));
   });
 

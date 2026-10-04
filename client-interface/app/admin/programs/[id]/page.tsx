@@ -67,6 +67,9 @@ function StatusSelector({
   const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closeNotes, setCloseNotes] = useState('');
+  const [closeDate, setCloseDate] = useState(() => new Date().toISOString().slice(0, 10));
   const ref = useRef<HTMLDivElement>(null);
   const s = STATUS_CONFIG[status as ProgramStatus] ?? STATUS_CONFIG.draft;
   const transitions = STATUS_TRANSITIONS[status as ProgramStatus] ?? [];
@@ -74,6 +77,7 @@ function StatusSelector({
   const showClose = !isClosed;
   const showReopen = isClosed;
   const menuOpenable = transitions.length > 0 || showClose || showReopen;
+  const todayKey = new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -89,7 +93,7 @@ function StatusSelector({
     onUpdate(t.value);
   };
 
-  const handleCloseProgram = async () => {
+  const openCloseDialog = async () => {
     setOpen(false);
     setBusy(true);
     try {
@@ -106,13 +110,26 @@ function StatusSelector({
         notes.push('Some certificates are not issued yet.');
       }
       notes.push('You can still close.');
-      if (!(await confirm({
-        title: 'Close this program?',
-        description: notes.join(' '),
-        confirmLabel: 'Close program',
-      }))) return;
-      await completionApi.close(programId);
+      setCloseNotes(notes.join(' '));
+      setCloseDate(new Date().toISOString().slice(0, 10));
+      setCloseOpen(true);
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not prepare program close'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCloseProgram = async () => {
+    if (!closeDate) {
+      toast.error('Choose a close date');
+      return;
+    }
+    setBusy(true);
+    try {
+      await completionApi.close(programId, { closedAt: closeDate });
       toast.success('Program closed');
+      setCloseOpen(false);
       onLifecycleChange();
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not close the program'));
@@ -183,7 +200,7 @@ function StatusSelector({
           {showClose && (
             <button
               type="button"
-              onClick={() => void handleCloseProgram()}
+              onClick={() => void openCloseDialog()}
               className="w-full flex items-start gap-3 px-3 py-3 hover:bg-slate-50 transition-colors text-left border-t border-slate-100 dark:border-slate-700"
             >
               <span className="mt-1 w-2 h-2 rounded-full shrink-0 bg-blue-500" />
@@ -207,6 +224,47 @@ function StatusSelector({
             </button>
           )}
         </MenuPanel>
+      )}
+
+      {closeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !busy && setCloseOpen(false)} />
+          <div className="relative z-10 w-full max-w-md rounded-2xl bg-card p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Close this program?</h3>
+            <p className="mt-1 text-sm text-slate-500">{closeNotes}</p>
+            <label className="mt-4 block text-sm font-medium text-slate-800" htmlFor="program-close-date">
+              Close date
+            </label>
+            <input
+              id="program-close-date"
+              type="date"
+              value={closeDate}
+              max={todayKey}
+              onChange={(e) => setCloseDate(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-slate-200 bg-card px-3 py-2 text-sm text-slate-900"
+            />
+            <p className="mt-1 text-xs text-slate-500">Defaults to today. You can backdate if needed.</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setCloseOpen(false)}
+                className="rounded-xl border border-slate-200 bg-card px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy || !closeDate}
+                onClick={() => void handleCloseProgram()}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                Close program
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

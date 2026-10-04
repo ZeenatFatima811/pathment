@@ -18,6 +18,19 @@ function enrollmentStatusAtClose(enrollment) {
   return 'program_completed';
 }
 
+/** Resolve close timestamp: omit/empty → now; YYYY-MM-DD  */
+function resolveClosedAt(value) {
+  if (value == null || value === '') return new Date();
+  const raw = String(value).trim();
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const closedAt = dayOnly ? new Date(`${raw}T12:00:00.000Z`) : new Date(raw);
+  if (Number.isNaN(closedAt.getTime())) throw new ValidationError('Enter a valid close date');
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const closeKey = closedAt.toISOString().slice(0, 10);
+  if (closeKey > todayKey) throw new ValidationError('Close date cannot be in the future');
+  return closedAt;
+}
+
 class ProgramLifecycleService {
   async assertAdmin(actor, programId) {
     if (!await authz.hasAdminAccess(actor)) throw new ForbiddenError('Only an admin can close or reopen a program');
@@ -103,7 +116,7 @@ class ProgramLifecycleService {
     };
   }
 
-  async closeProgram(programId, actor) {
+  async closeProgram(programId, actor, { closedAt: closedAtInput } = {}) {
     await this.assertAdmin(actor, programId);
     return sequelize.transaction(async transaction => {
       const program = await models.Program.findByPk(programId, { transaction, lock: transaction.LOCK.UPDATE });
@@ -114,7 +127,7 @@ class ProgramLifecycleService {
         where: { programId, kind: 'cohort' }, transaction, lock: transaction.LOCK.UPDATE, order: [['id', 'ASC']],
       });
       const { enrollments } = await this.decisions(programId, transaction);
-      const closedAt = new Date();
+      const closedAt = resolveClosedAt(closedAtInput);
 
       const groups = new Map();
       for (const enrollment of enrollments) {
