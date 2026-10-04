@@ -40,7 +40,7 @@ import {
   type CohortMomentum,
 } from '@/lib/hooks/mentor';
 import { useAuth } from '@/lib/context/AuthContext';
-import { useClan, isHistoricalMentorScope } from '@/lib/context/ClanContext';
+import { useClan, isHistoricalMentorScope, ALL_CLANS } from '@/lib/context/ClanContext';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { useMenteeActivity } from '@/lib/hooks/mentor/useMenteeActivity';
 import { frictionApi } from '@/lib/services/friction-api';
@@ -316,12 +316,13 @@ export default function MenteeDetail() {
   const [pauseBusy, setPauseBusy] = useState(false);
   const togglePause = async () => {
     setPauseBusy(true);
+    const clanId = activeClanId !== ALL_CLANS ? activeClanId : undefined;
     try {
       if (pauseState?.paused) {
-        await mentorApi.resumeMentee(menteeId);
+        await mentorApi.resumeMentee(menteeId, clanId);
         toast.success('Mentee resumed');
       } else {
-        await mentorApi.pauseMentee(menteeId);
+        await mentorApi.pauseMentee(menteeId, undefined, clanId);
         toast.success('Mentee paused — kept in the clan, out of reports');
       }
       await refetchProfile();

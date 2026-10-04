@@ -16,7 +16,21 @@ function taskStandardPoints(task) {
   return pointsForDifficulty(task?.roadmapTask?.difficulty);
 }
 
+/** Block mentor writes on frozen cohort clans; standing + unscoped legacy stay allowed. */
+async function assertWritableClanForMentorReview(clanId) {
+  if (!clanId) return;
+  const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'frozenAt'] });
+  if (clan && clan.kind !== 'standing' && clan.frozenAt) {
+    throw new ForbiddenError('This cohort clan is historical. Reviews are view-only.');
+  }
+}
+
 class SubmissionService {
+  /** Shared by quiz/interview review writes — frozen cohort clans stay view-only. */
+  assertClanWritableForReview(clanId) {
+    return assertWritableClanForMentorReview(clanId);
+  }
+
   /**
    * Submit task with files and rich text content
    */
@@ -161,7 +175,8 @@ class SubmissionService {
         actionLabel: 'Review submission',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: `${submitterName} submitted “${submittedTitle}” for review`
+        emailSubject: `${submitterName} submitted “${submittedTitle}” for review`,
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'task_submitted',
@@ -228,7 +243,8 @@ class SubmissionService {
         actionLabel: 'Review Request',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: 'Pathment: Extension request from mentee'
+        emailSubject: 'Pathment: Extension request from mentee',
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'extension_requested',
@@ -256,6 +272,7 @@ class SubmissionService {
     if (!(await authzService.canActOnTask(mentorId, submission.assignedTask, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to act on this task');
     }
+    await assertWritableClanForMentorReview(submission.assignedTask?.clanId);
 
     if (!submission.extensionRequested) {
       throw new ValidationError('This is not an extension request');
@@ -321,7 +338,8 @@ class SubmissionService {
         actionLabel: 'View Task',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: `Pathment: Extension ${approved ? 'approved' : 'rejected'}`
+        emailSubject: `Pathment: Extension ${approved ? 'approved' : 'rejected'}`,
+        clanId: submission.assignedTask.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'extension_handled',
@@ -356,6 +374,7 @@ class SubmissionService {
     if (!(await authzService.canActOnTask(mentorId, task, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to review this submission');
     }
+    await assertWritableClanForMentorReview(task.clanId);
 
     if (submission.status !== 'pending' && submission.status !== 'reviewing') {
       throw new ValidationError('Submission cannot be reviewed in current status');
@@ -513,7 +532,8 @@ class SubmissionService {
         actionLabel: isApproved ? 'See review' : 'View notes & resubmit',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: isApproved ? `Approved: “${reviewedTitle}”` : `Revision requested: “${reviewedTitle}”`
+        emailSubject: isApproved ? `Approved: “${reviewedTitle}”` : `Revision requested: “${reviewedTitle}”`,
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'submission_reviewed',
@@ -534,7 +554,8 @@ class SubmissionService {
           actionLabel: 'Read feedback',
           relatedEntityType: 'task_feedback',
           relatedEntityId: submission.id,
-          emailSubject: `${reviewerName} left feedback on “${reviewedTitle}”`
+          emailSubject: `${reviewerName} left feedback on “${reviewedTitle}”`,
+          clanId: task.clanId || null,
         },
         dedupe: {
           relatedEntityType: 'feedback_sent',
@@ -646,7 +667,8 @@ class SubmissionService {
           actionLabel: 'Read feedback',
           relatedEntityType: 'task_feedback',
           relatedEntityId: submission.id,
-          emailSubject: `Updated feedback on “${editedTitle}”`
+          emailSubject: `Updated feedback on “${editedTitle}”`,
+          clanId: task.clanId || null,
         },
         dedupe: {
           relatedEntityType: 'feedback_edited',
@@ -888,17 +910,15 @@ class SubmissionService {
   }
 
   /**
-   * Which of THIS mentor's clans each mentee sits in, so the approvals lists can
-   * be scoped by the sidebar clan switcher the same way the cohort views are.
-   * Mirrors getCohort's clan-attach: one clan per mentee (their active mentee
-   * membership in a clan this mentor runs). Batched — no per-item queries.
+   * Fallback clan attribution when AssignedTask.clanId is missing (legacy rows):
+   * first active mentee membership in a clan this mentor runs. Prefer
+   * `_clanOfTask` — membership alone is wrong for multi-clan mentees.
    */
   async _clanByMentee(mentorId, menteeIds = []) {
     const map = new Map();
-    if (!menteeIds.length) return map;
     const cohortService = require('./cohortService');
     const { clanIds, clanNameById } = await cohortService.mentorClanMap(mentorId);
-    if (!clanIds.length) return map;
+    if (!menteeIds.length || !clanIds.length) return { map, clanNameById };
     const rows = await models.ClanMembership.findAll({
       where: {
         clanId: { [Op.in]: clanIds },
@@ -911,7 +931,19 @@ class SubmissionService {
     for (const r of rows) {
       if (!map.has(r.userId)) map.set(r.userId, { id: r.clanId, name: clanNameById.get(r.clanId) || null });
     }
-    return map;
+    return { map, clanNameById };
+  }
+
+  /**
+   * Clan for the sidebar Approvals filter. Use the task's clanId (the clan the
+   * work was assigned in) so a standing submission isn't tagged as the mentee's
+   * completed cohort when they belong to both.
+   */
+  _clanOfTask(task, clanByMentee, clanNameById) {
+    if (task?.clanId) {
+      return { id: task.clanId, name: clanNameById?.get(task.clanId) || null };
+    }
+    return clanByMentee.get(task?.menteeId) || null;
   }
 
   /**
@@ -933,7 +965,7 @@ class SubmissionService {
         model: models.AssignedTask,
         as: 'assignedTask',
         required: true,
-        attributes: ['id', 'status', 'menteeId'],
+        attributes: ['id', 'status', 'menteeId', 'clanId'],
         where: await this._reviewableTaskWhere(mentorId),
       }],
     });
@@ -953,14 +985,14 @@ class SubmissionService {
     const toReview = [...latestByTask.values()]
       .filter((s) => !(s.extensionRequested && s.extensionStatus === 'pending'));
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(toReview.map((s) => s.assignedTask?.menteeId).filter(Boolean))]
     );
 
     const byClan = {};
     for (const s of toReview) {
-      const clanId = clanByMentee.get(s.assignedTask?.menteeId)?.id;
+      const clanId = this._clanOfTask(s.assignedTask, clanByMentee, clanNameById)?.id;
       if (clanId) byClan[clanId] = (byClan[clanId] || 0) + 1;
     }
 
@@ -1025,7 +1057,7 @@ class SubmissionService {
       ? await models.UserSettings.findAll({ where: { userId: { [Op.in]: menteeIds } }, attributes: ['userId', 'timezone'] })
       : [];
     const tzByUser = new Map(tzRows.map((r) => [r.userId, r.timezone || 'UTC']));
-    const clanByMentee = await this._clanByMentee(mentorId, menteeIds);
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(mentorId, menteeIds);
 
     return latest.map((s) => {
       const t = s.assignedTask;
@@ -1033,8 +1065,8 @@ class SubmissionService {
       return {
         submissionId: s.id,
         taskId: t.id,
-        // The clan this mentee is in (for the sidebar clan-scope filter).
-        clan: clanByMentee.get(t.menteeId) || null,
+        // Clan the work was assigned in (sidebar filter) — not "first membership".
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         // Stable peer-grouping key for the client's "group by task" view. Title
         // can be per-mentee overridden, so don't group by title.
         roadmapTaskId: t.roadmapTaskId || null,
@@ -1102,7 +1134,7 @@ class SubmissionService {
       order: [['updatedAt', 'DESC']],
     });
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(tasks.map((t) => t.menteeId).filter(Boolean))]
     );
@@ -1116,7 +1148,7 @@ class SubmissionService {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
       return {
         taskId: t.id,
-        clan: clanByMentee.get(t.menteeId) || null,
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         roadmapTaskId: t.roadmapTaskId || null,
         title: t.titleOverride || t.roadmapTask?.title || 'Task',
         type: t.typeOverride || t.roadmapTask?.type || null,
@@ -1162,7 +1194,7 @@ class SubmissionService {
       limit,
     });
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(tasks.map((t) => t.menteeId).filter(Boolean))]
     );
@@ -1174,7 +1206,7 @@ class SubmissionService {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
       return {
         taskId: t.id,
-        clan: clanByMentee.get(t.menteeId) || null,
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         roadmapTaskId: t.roadmapTaskId || null,
         title: t.titleOverride || t.roadmapTask?.title || 'Task',
         type: t.typeOverride || t.roadmapTask?.type || null,

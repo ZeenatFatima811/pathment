@@ -2,6 +2,7 @@ const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const cohortService = require('../services/cohortService');
 const submissionService = require('../services/submissionService');
+const mentorshipPauseService = require('../services/mentorshipPauseService');
 const authzService = require('../services/authzService');
 const { AuthorizationError } = require('../utils/errors/errorTypes');
 const { requestedClanId } = require('../middlewares/portalScope');
@@ -56,7 +57,7 @@ const getMenteeProfile = catchAsync(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Mentee not found', statusCode: 404 });
   }
   // Pause state within the requester's clans (drives the Pause/Resume control).
-  try { profile.pauseState = await require('../services/mentorshipPauseService').menteeState(req.user, req.params.id); } catch { profile.pauseState = { paused: false, clanId: null }; }
+  try { profile.pauseState = await mentorshipPauseService.menteeState(req.user, req.params.id, clanId); } catch { profile.pauseState = { paused: false, clanId: null }; }
   res.status(200).json(successResponse('Mentee profile retrieved', { profile }));
 });
 

@@ -109,6 +109,14 @@ class CertificateService {
     let clanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
     if (!clanIds.length) return [];
 
+    // Standee selected: that clan only (never cohort clans of the same program).
+    if (clanId) {
+      const picked = await models.Clan.findByPk(clanId, { attributes: ['id', 'kind'] });
+      if (picked?.kind === 'standing') {
+        return clanIds.includes(clanId) ? [clanId] : [];
+      }
+    }
+
     {
       const inProgram = await models.Clan.findAll({
         where: { id: { [Op.in]: clanIds }, kind: 'cohort', ...(programId ? { programId } : {}) },
@@ -181,6 +189,43 @@ class CertificateService {
     const activeMentees = [];
     const pausedMentees = [];
 
+    // Standee path: roster = that standing clan only (no enrollments / no cohort).
+    if (clanId) {
+      const picked = await models.Clan.findByPk(clanId, { attributes: ['id', 'name', 'kind'] });
+      if (picked?.kind === 'standing') {
+        const isAdmin = await authzService.actsAsAdmin(user);
+        if (!isAdmin) {
+          const allowed = await this.getMentorScopedMenteeClans(user, programId, { clanId });
+          if (!allowed.includes(clanId)) {
+            return { activeMentees: [], pausedMentees: [] };
+          }
+        }
+        const menteeMembers = await models.ClanMembership.findAll({
+          where: { clanId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
+          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status'] }],
+        });
+        for (const mem of menteeMembers) {
+          if (!mem.user) continue;
+          const u = mem.user;
+          const row = {
+            id: u.id,
+            firstName: u.firstName,
+            lastName: u.lastName,
+            email: u.email,
+            clanId: picked.id,
+            clanName: picked.name,
+          };
+          (mem.status === 'paused' || u.status === 'suspended')
+            ? pausedMentees.push(row)
+            : activeMentees.push(row);
+        }
+        return {
+          activeMentees: deduplicateById(activeMentees),
+          pausedMentees: deduplicateById(pausedMentees),
+        };
+      }
+    }
+
     // One pass over this programme's mentee memberships answers both questions
     // the roster needs: who is paused, and which clan each person sits in.
     // Resolved up front rather than per row — a cohort is hundreds of people,
@@ -190,19 +235,30 @@ class CertificateService {
     if (programId) {
       const memberships = await models.ClanMembership.findAll({
         where: { role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
-        include: [{ model: models.Clan, as: 'clan', where: { programId, kind: 'cohort' }, attributes: ['id', 'name'] }],
+        include: [{ model: models.Clan, as: 'clan', where: { programId, kind: 'cohort' }, attributes: ['id', 'name', 'frozenAt'] }],
         attributes: ['userId', 'status']
       });
       for (const mem of memberships) {
         if (mem.status === 'paused') pausedMenteeIdsSet.add(mem.userId);
-        // Somebody in two clans of one programme keeps the first: the roster
-        // shows where they are, and a second row would double-count them.
-        if (mem.clan && !clanByMentee.has(mem.userId)) {
-          clanByMentee.set(mem.userId, { clanId: mem.clan.id, clanName: mem.clan.name });
+        // Prefer a frozen (completed) cohort clan over a live one when both
+        // exist — cohort certificates stay on the finished program.
+        if (!mem.clan) continue;
+        const prev = clanByMentee.get(mem.userId);
+        const nextFrozen = !!mem.clan.frozenAt;
+        if (!prev || (nextFrozen && !prev._frozen)) {
+          clanByMentee.set(mem.userId, {
+            clanId: mem.clan.id,
+            clanName: mem.clan.name,
+            _frozen: nextFrozen,
+          });
         }
       }
     }
-    const withClan = (row) => ({ ...row, ...(clanByMentee.get(row.id) ?? { clanId: null, clanName: null }) });
+    const withClan = (row) => {
+      const hit = clanByMentee.get(row.id);
+      if (!hit) return { ...row, clanId: null, clanName: null };
+      return { ...row, clanId: hit.clanId, clanName: hit.clanName };
+    };
 
     // Unrestricted ONLY for real admin access. Everyone else is confined to the
     // clans they mentor — and to none at all if they mentor none, which is the
@@ -371,7 +427,7 @@ class CertificateService {
    * Scoped like every other read: a mentor sees the people they mentor, an
    * admin sees everyone, and a mentee can open their own.
    */
-  async getMenteeEvidence(templateId, menteeId, user) {
+  async getMenteeEvidence(templateId, menteeId, user, { clanId: preferredClanId = null } = {}) {
     const startedAt = Date.now();
 
     /**
@@ -397,16 +453,34 @@ class CertificateService {
 
     const criteria = sortCriteriaByPriority(Array.isArray(template.criteria) ? template.criteria : []);
 
-    const membership = await models.ClanMembership.findOne({
-      where: { userId: menteeId, role: 'mentee', status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
-      include: [{
-        model: models.Clan, as: 'clan',
-        where: { kind: 'cohort', ...(template.programId ? { programId: template.programId } : {}) },
-        attributes: ['id', 'name'],
-        required: Boolean(template.programId)
-      }]
-    });
-    const clanId = membership?.clan?.id ?? null;
+    let clanId = null;
+    if (preferredClanId) {
+      const preferred = await models.Clan.findByPk(preferredClanId, { attributes: ['id', 'kind'] });
+      if (preferred?.kind === 'standing') {
+        const mem = await models.ClanMembership.findOne({
+          where: {
+            userId: menteeId,
+            clanId: preferredClanId,
+            role: 'mentee',
+            status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          },
+          attributes: ['clanId'],
+        });
+        if (mem) clanId = preferredClanId;
+      }
+    }
+    if (!clanId) {
+      const membership = await models.ClanMembership.findOne({
+        where: { userId: menteeId, role: 'mentee', status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
+        include: [{
+          model: models.Clan, as: 'clan',
+          where: { kind: 'cohort', ...(template.programId ? { programId: template.programId } : {}) },
+          attributes: ['id', 'name'],
+          required: Boolean(template.programId)
+        }]
+      });
+      clanId = membership?.clan?.id ?? null;
+    }
 
     const [metrics] = await aggregateMenteeData([menteeId], clanId, template.programId);
     const { maxEligibleTier, hardChecks } = preCheckHardConstraints(metrics, criteria);
@@ -1168,6 +1242,7 @@ class CertificateService {
 
       const result = {
         mentee_id:            menteeId,
+        clan_id:              menteePayload.clan_id || null,
         decision:             validTier ? 'award' : 'no_certificate',
         is_eligible:          Boolean(validTier),
         certificate_tier:     validTier,
@@ -1209,6 +1284,7 @@ class CertificateService {
 
     return {
       mentee_id:       menteePayload.mentee_id,
+      clan_id:         menteePayload.clan_id || null,
       _failed: true,
       decision: 'undecided',
       is_eligible: false,
@@ -1575,8 +1651,6 @@ class CertificateService {
         throw new NotFoundError('Certificate template not found');
       }
 
-      if (template.program?.closedAt && !await authzService.hasAdminAccess(user)) throw new ForbiddenError('Only an admin can issue certificates after program close');
-
       // Issuing is a WRITE and the recipient list comes straight from the
       // request body, so it has to be checked against what this user actually
       // mentors. Nothing did that before: a mentor could name any mentee id in
@@ -1584,7 +1658,30 @@ class CertificateService {
       const requested = Array.isArray(recipients) && recipients.length > 0
         ? recipients.map((r) => r.menteeId)
         : (Array.isArray(menteeIds) ? menteeIds : []);
-      const scope = await this.resolveMenteeScope(user, { programId: template.programId });
+
+      // Standee rounds stay issuable after program close; cohort closeout does not.
+      let standingClanId = null;
+      if (requested.length) {
+        const verifClans = await models.CertificateVerification.findAll({
+          where: { templateId, menteeId: { [Op.in]: requested } },
+          attributes: ['clanId'],
+          transaction: t,
+          raw: true,
+        });
+        const ids = [...new Set(verifClans.map((r) => r.clanId).filter(Boolean))];
+        if (ids.length === 1) {
+          const c = await models.Clan.findByPk(ids[0], { attributes: ['id', 'kind'], transaction: t });
+          if (c?.kind === 'standing') standingClanId = c.id;
+        }
+      }
+      if (!standingClanId && template.program?.closedAt && !await authzService.hasAdminAccess(user)) {
+        throw new ForbiddenError('Only an admin can issue certificates after program close');
+      }
+
+      const scope = await this.resolveMenteeScope(user, {
+        programId: template.programId,
+        clanId: standingClanId,
+      });
       if (scope !== null) {
         const allowed = new Set(scope);
         const refused = [...new Set(requested.filter((id) => id && !allowed.has(id)))];

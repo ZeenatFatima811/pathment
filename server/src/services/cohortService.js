@@ -847,11 +847,15 @@ class CohortService {
 
   /**
    * SQL fragment for assigned_tasks so cohort/program scores never mix standing work.
-   * Legacy clan_id NULL rows still count; standing clans are excluded.
+   * Standing scopes: only that clan's rows. Cohort/program: legacy NULL + cohort
+   * clans only (standing excluded).
    */
-  taskSql({ programId = null, clanId = null } = {}, alias = '') {
+  taskSql({ programId = null, clanId = null, standing = false } = {}, alias = '') {
     const p = alias ? `${alias}.` : '';
     const org = sequelize.escape(requireWorkspaceId());
+    if (standing && clanId) {
+      return `${p}clan_id = ${sequelize.escape(clanId)}`;
+    }
     return `${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
     (${p}clan_id IS NULL OR ${p}clan_id IN (SELECT id FROM clans WHERE organization_id = ${org} AND kind = 'cohort'))
     ${programId ? `AND ${p}enrollment_id IN (SELECT id FROM enrollments WHERE organization_id = ${org} AND program_id = ${sequelize.escape(programId)})` : ''}`;
@@ -1018,13 +1022,22 @@ class CohortService {
 
     const { clanIds, clanNameById, menteeMemberships } = clanMapRes;
     if (clanIds.length) {
-      const clanByMentee = new Map();
+      // All memberships for sidebar scope — first-wins hid standing dual-members.
+      const clansByMentee = new Map();
       for (const m of menteeMemberships) {
-        if (!clanByMentee.has(m.userId)) clanByMentee.set(m.userId, { id: m.clanId, name: clanNameById.get(m.clanId) });
+        const list = clansByMentee.get(m.userId) || [];
+        list.push({ id: m.clanId, name: clanNameById.get(m.clanId) || null });
+        clansByMentee.set(m.userId, list);
       }
-      cohort.forEach((r) => { r.clan = clanByMentee.get(r.id) || null; });
+      cohort.forEach((r) => {
+        const clans = clansByMentee.get(r.id) || [];
+        r.clans = clans;
+        r.clan = clanId
+          ? (clans.find((c) => c.id === clanId) || clans[0] || null)
+          : (clans[0] || null);
+      });
     } else {
-      cohort.forEach((r) => { r.clan = null; });
+      cohort.forEach((r) => { r.clan = null; r.clans = []; });
     }
 
     // New-mentee flag: joined the platform within the last NEW_MENTEE_DAYS, so a

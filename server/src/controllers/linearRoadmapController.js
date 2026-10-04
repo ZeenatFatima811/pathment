@@ -62,7 +62,7 @@ const assign = catchAsync(async (req, res) => {
 
 // Mentee IDs that already have this roadmap (so the UI can disable re-assigning).
 const assignees = catchAsync(async (req, res) => {
-  const menteeIds = await linearRoadmapService.getAssignees(req.params.id);
+  const menteeIds = await linearRoadmapService.getAssignees(req.params.id, requestedClanId(req));
   res.status(200).json(successResponse('Roadmap assignees retrieved', { menteeIds }));
 });
 

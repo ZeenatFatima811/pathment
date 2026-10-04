@@ -60,7 +60,9 @@ const uploadAsset = catchAsync(async (req, res) => {
  * when they overruled it.
  */
 const getMenteeEvidence = catchAsync(async (req, res) => {
-  const data = await certificateService.getMenteeEvidence(req.params.id, req.params.menteeId, req.user);
+  const data = await certificateService.getMenteeEvidence(req.params.id, req.params.menteeId, req.user, {
+    clanId: req.query.clanId || portalOf(req).clanId || null,
+  });
   res.status(200).json(successResponse('Certificate evidence retrieved', data));
 });
 

@@ -1,6 +1,7 @@
 const authzService = require('../services/authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { AuthenticationError, AuthorizationError } = require('../utils/errors/errorTypes');
+const { requestedClanId } = require('./portalScope');
 
 /**
  * requirePermission('task.review', scopeResolver?)
@@ -174,13 +175,15 @@ const scope = {
   delay: (param = 'id') => async (req) => authzService.scopeOfDelay(req.params[param]),
   announcement: (param = 'id') => async (req) => authzService.scopeOfAnnouncement(req.params[param]),
   track: (param = 'id') => async (req) => authzService.scopeOfTrack(req.params[param]),
-  mentee: (param = 'id') => async (req) => authzService.scopeOfMentee(req.params[param]),
-  menteeBody: (field = 'menteeId') => async (req) => authzService.scopeOfMentee(req.body && req.body[field]),
+  mentee: (param = 'id') => async (req) =>
+    authzService.scopeOfMentee(req.params[param], requestedClanId(req)),
+  menteeBody: (field = 'menteeId') => async (req) =>
+    authzService.scopeOfMentee(req.body && req.body[field], requestedClanId(req)),
   // Task creation names its target in the body (enrollmentId or menteeId).
-  taskTarget: () => async (req) =>
-    req.body && req.body.enrollmentId
-      ? authzService.scopeOfEnrollment(req.body.enrollmentId)
-      : authzService.scopeOfMentee(req.body && req.body.menteeId),
+  taskTarget: () => async (req) => {
+    if (req.body && req.body.enrollmentId) return authzService.scopeOfEnrollment(req.body.enrollmentId);
+    return authzService.scopeOfMentee(req.body && req.body.menteeId, requestedClanId(req));
+  },
   // Announcement creation names its audience in the body.
   announcementBody: () => async (req) =>
     authzService.scopeOfAnnouncementAudience(req.body && req.body.audience, req.body && req.body.audienceId)

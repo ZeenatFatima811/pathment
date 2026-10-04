@@ -73,7 +73,8 @@ class CertificateVerificationService {
         const aiMatchScore = result.match_score != null && Number.isFinite(Number(result.match_score)) ? Number(result.match_score) : null;
         const existing = await models.CertificateVerification.findOne({ where: { templateId, menteeId }, transaction });
 
-        const clanId = clanByMentee.get(menteeId);
+        // Prefer clan stamped on the AI result (Standee runs) over cohort first-membership.
+        const clanId = result.clan_id || result.clanId || clanByMentee.get(menteeId);
         if (approved.has(clanId)) continue;
         const pendingGradeChanged = !existing || (existing.status !== 'verified' &&
           (existing.aiTier !== aiTier || existing.aiDecision !== aiDecision));
@@ -84,7 +85,7 @@ class CertificateVerificationService {
           await models.CertificateVerification.create({
             templateId,
             menteeId,
-            clanId: clanByMentee.get(menteeId) || null,
+            clanId: clanId || null,
             aiTier,
             aiDecision,
             decision: aiDecision,
@@ -817,11 +818,20 @@ class CertificateVerificationService {
     // the mentee at all. It is on by default for co-mentors.
     let clanIds = await authzService.clansWhereCan(user, PERMISSIONS.CERTIFICATE_VERIFY);
     if (!clanIds.length) return [];
+
+    // Standee + cohort: mentors may sign off in either kind they can verify.
+    // onlyClanId = Standee keeps the round isolated to that clan.
     {
-      const inProgram = await models.Clan.findAll({
-        where: { id: { [Op.in]: clanIds }, kind: 'cohort', ...(programId ? { programId } : {}) }, attributes: ['id'], raw: true
+      const inScope = await models.Clan.findAll({
+        where: {
+          id: { [Op.in]: clanIds },
+          kind: { [Op.in]: ['cohort', 'standing'] },
+          ...(programId ? { programId } : {}),
+        },
+        attributes: ['id'],
+        raw: true,
       });
-      clanIds = inProgram.map((c) => c.id);
+      clanIds = inScope.map((c) => c.id);
     }
     if (onlyClanId) clanIds = clanIds.filter((id) => id === onlyClanId);
     return clanIds;
@@ -848,10 +858,23 @@ class CertificateVerificationService {
         status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES }
       },
       attributes: ['userId', 'clanId'],
-      include: [{ model: models.Clan, as: 'clan', where: { kind: 'cohort', ...(programId ? { programId } : {}) }, attributes: [] }],
-      raw: true
+      include: [{
+        model: models.Clan,
+        as: 'clan',
+        where: { kind: 'cohort', ...(programId ? { programId } : {}) },
+        attributes: ['frozenAt'],
+      }],
     });
-    for (const row of rows) if (!out.has(row.userId)) out.set(row.userId, row.clanId);
+    // Prefer frozen (completed) cohort when a mentee also sits in a live cohort.
+    // Standee attribution comes from result.clan_id in open() — not from here.
+    const frozenByUser = new Map();
+    for (const row of rows) {
+      const frozen = !!row.clan?.frozenAt;
+      if (!out.has(row.userId) || (frozen && !frozenByUser.get(row.userId))) {
+        out.set(row.userId, row.clanId);
+        frozenByUser.set(row.userId, frozen);
+      }
+    }
     return out;
   }
 
@@ -863,12 +886,21 @@ class CertificateVerificationService {
   async _activeReviewRows(rows, programId, { transaction } = {}) {
     if (!rows.length) return [];
     const menteeIds = [...new Set(rows.map((row) => row.menteeId))];
+    // Include standing memberships so Standee review rows are not dropped.
     const memberships = await models.ClanMembership.findAll({
       where: { userId: { [Op.in]: menteeIds }, role: 'mentee', status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
       attributes: ['userId', 'clanId', 'status'],
       include: [
         { model: models.User, as: 'user', attributes: [], required: true, where: { status: { [Op.ne]: 'suspended' } } },
-        { model: models.Clan, as: 'clan', attributes: [], required: true, where: { kind: 'cohort', ...(programId ? { programId } : {}) } }
+        {
+          model: models.Clan,
+          as: 'clan',
+          attributes: [],
+          required: true,
+          where: programId
+            ? { programId, kind: { [Op.in]: ['cohort', 'standing'] } }
+            : { kind: { [Op.in]: ['cohort', 'standing'] } },
+        }
       ],
       raw: true, transaction
     });

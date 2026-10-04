@@ -6,6 +6,7 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const authzService = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
+const submissionService = require('./submissionService');
 
 /**
  * InterviewSessionService — the candidate runner (Phase 2). Owns starting/resuming
@@ -15,10 +16,11 @@ const { PERMISSIONS } = require('../config/permissions');
  */
 class InterviewSessionService {
   /** Load the assignment + kit for a task, asserting the mentee owns it. */
-  async _loadContext(taskId, menteeId) {
+  async _loadContext(taskId, menteeId, { clanId = null } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This interview is not assigned to you');
+    if (clanId && task.clanId && task.clanId !== clanId) throw new NotFoundError('Task not found');
 
     const assignment = await models.InterviewAssignment.findOne({ where: { assignedTaskId: taskId } });
     if (!assignment) throw new NotFoundError('This task is not an interview');
@@ -53,8 +55,8 @@ class InterviewSessionService {
    * The candidate's view: kit meta + public questions + options + current attempt
    * state (whether they can start, resume an in-progress attempt, or are done).
    */
-  async getForCandidate(taskId, menteeId) {
-    const { task, assignment, kit, questions } = await this._loadContext(taskId, menteeId);
+  async getForCandidate(taskId, menteeId, { clanId = null } = {}) {
+    const { task, assignment, kit, questions } = await this._loadContext(taskId, menteeId, { clanId });
 
     // Interviewer identity: the mentor's kit config, defaulting the NAME to the
     // kit creator's own name (so it's "Meet <mentor>", not a generic persona).
@@ -179,8 +181,8 @@ class InterviewSessionService {
   }
 
   /** Start a fresh attempt or resume the in-progress one. Enforces retake rules. */
-  async startOrResume(taskId, menteeId) {
-    const { assignment } = await this._loadContext(taskId, menteeId);
+  async startOrResume(taskId, menteeId, { clanId = null } = {}) {
+    const { assignment } = await this._loadContext(taskId, menteeId, { clanId });
 
     const existing = await models.InterviewSession.findOne({
       where: { assignedTaskId: taskId, menteeId, status: 'in_progress' },
@@ -381,6 +383,11 @@ class InterviewSessionService {
     }
   }
 
+  async _assertReviewerCanWrite(mentorId, task) {
+    await this._assertReviewer(mentorId, task);
+    await submissionService.assertClanWritableForReview(task?.clanId);
+  }
+
   /**
    * The mentor's review payload for an interview task: kit questions WITH their
    * reference answers, the candidate's latest submitted attempt (transcript /
@@ -501,7 +508,7 @@ class InterviewSessionService {
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No submitted interview to grade');
@@ -532,7 +539,7 @@ class InterviewSessionService {
   async deleteSnapshots(taskId, mentorId) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No interview session found');
@@ -556,7 +563,7 @@ class InterviewSessionService {
   async setFlag(taskId, mentorId, { flagged, reason } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No interview session found');
@@ -586,7 +593,7 @@ class InterviewSessionService {
   async requestRedo(taskId, mentorId, { questionIds = [], note } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const requested = [...new Set((questionIds || []).map(String))].filter(Boolean);
     if (requested.length === 0) throw new ValidationError('Select at least one question to redo.');
@@ -643,7 +650,7 @@ class InterviewSessionService {
   async aiDraftAnswer(taskId, mentorId, questionId) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     // AI draft is mentor-initiated and runs on the mentor's OWN key, so it's
     // available whenever this is a real interview — not gated to the assign-time
@@ -720,7 +727,7 @@ class InterviewSessionService {
   async aiDraftAll(taskId, mentorId, { questionIds } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const assignment = await models.InterviewAssignment.findOne({ where: { assignedTaskId: taskId } });
     if (!assignment) throw new NotFoundError('This task is not an interview');
@@ -843,7 +850,7 @@ class InterviewSessionService {
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No submitted interview to review');
@@ -855,7 +862,6 @@ class InterviewSessionService {
     const totalAwarded = answers.reduce((s, a) => s + (Number(a.pointsAwarded) || 0), 0);
     const pct = totalPossible > 0 ? (totalAwarded / totalPossible) * 100 : 0;
 
-    const submissionService = require('./submissionService');
     await submissionService.reviewSubmission(submissionId, mentorId, {
       decision: 'approved',
       isApproved: true,
