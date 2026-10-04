@@ -16,6 +16,7 @@ import { ClanAvatarEditor } from '@/components/shared/ClanAvatarEditor';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { CoMentorPermissionsDrawer } from '@/components/shared/CoMentorPermissionsDrawer';
+import { SelectMenu } from '@/components/shared/SelectMenu';
 import { IncomingTransfers, OutgoingTransfers } from '@/components/mentor/IncomingTransfers';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { publicJoinBlockedMessage, publicJoinRequestLabel, publicJoinRequesterLocation, useClanPublicJoin } from '@/lib/hooks/mentor';
@@ -976,16 +977,28 @@ function AddCoverDrawer({ clanId, clanName, onClose, onAdded }: { clanId: string
   );
 }
 
-/** Lead-mentor: pull in people (including mentees of other clans), or invite a new one. */
+/** Lead-mentor: pull in people (including mentees of other clans), or invite a new one.
+ *  Standing clans also offer a completed-clan filter with multi-select add. */
 function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChanged }: { clanId: string; clanName: string; standing?: boolean; onClose: () => void; onChanged: () => void }) {
+  const { clans } = useClan();
   const [query, setQuery] = useState('');
   const [people, setPeople] = useState<{ id: string; name: string; email: string; role?: string; placedClanId?: string | null; placedClanName?: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviting, setInviting] = useState(false);
+  // Standing only: filter mentees from a completed cohort clan the mentor ran.
+  const [sourceClanId, setSourceClanId] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [alreadyHere, setAlreadyHere] = useState<Set<string>>(new Set());
 
-  const load = useCallback((q: string) => {
+  const completedClans = useMemo(
+    () => clans.filter((c) => c.id !== clanId && c.kind !== 'standing' && c.frozenAt),
+    [clans, clanId],
+  );
+  const fromCompletedClan = standing && Boolean(sourceClanId);
+
+  const loadAvailable = useCallback((q: string) => {
     setLoading(true);
     clanApi.availableMembers(clanId, q || undefined)
       .then((r: any) => setPeople(r.data?.people || []))
@@ -993,10 +1006,48 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
       .finally(() => setLoading(false));
   }, [clanId]);
 
+  // Who is already a mentee here — used to hide them when picking from a completed clan.
   useEffect(() => {
-    const t = setTimeout(() => load(query.trim()), 250);
+    if (!standing) return;
+    clanApi.get(clanId)
+      .then((r: any) => {
+        const memberships: Member[] = r.data?.clan?.memberships || r.data?.memberships || [];
+        setAlreadyHere(new Set(memberships.filter((m) => m.role === 'mentee').map((m) => m.user.id)));
+      })
+      .catch(() => setAlreadyHere(new Set()));
+  }, [standing, clanId]);
+
+  useEffect(() => {
+    if (fromCompletedClan) {
+      setLoading(true);
+      setSelected(new Set());
+      clanApi.get(sourceClanId)
+        .then((r: any) => {
+          const memberships: Member[] = r.data?.clan?.memberships || r.data?.memberships || [];
+          const mentees = memberships
+            .filter((m) => m.role === 'mentee' && !alreadyHere.has(m.user.id))
+            .map((m) => ({
+              id: m.user.id,
+              name: name(m.user),
+              email: m.user.email,
+              role: m.user.role,
+            }));
+          setPeople(mentees);
+        })
+        .catch(() => setPeople([]))
+        .finally(() => setLoading(false));
+      return;
+    }
+    const t = setTimeout(() => loadAvailable(query.trim()), 250);
     return () => clearTimeout(t);
-  }, [query, load]);
+  }, [fromCompletedClan, sourceClanId, alreadyHere, query, loadAvailable]);
+
+  const visiblePeople = useMemo(() => {
+    if (!fromCompletedClan) return people;
+    const q = query.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter((p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q));
+  }, [people, query, fromCompletedClan]);
 
   const add = async (p: { id: string; name: string }) => {
     setBusy(p.id);
@@ -1005,9 +1056,55 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
       else await clanApi.addMember(clanId, p.id, 'mentee');
       toast.success(`${p.name} added to ${clanName}`);
       setPeople((prev) => prev.filter((x) => x.id !== p.id));
+      setSelected((prev) => { const n = new Set(prev); n.delete(p.id); return n; });
+      setAlreadyHere((prev) => new Set(prev).add(p.id));
       onChanged();
     } catch (e) { toast.error(extractApiErrorMessage(e, 'Could not add')); }
     finally { setBusy(null); }
+  };
+
+  const addSelected = async () => {
+    const ids = visiblePeople.filter((p) => selected.has(p.id)).map((p) => p.id);
+    if (!ids.length) { toast.error('Select at least one mentee'); return; }
+    setBusy('batch');
+    try {
+      await completionApi.addMentees(clanId, ids);
+      toast.success(`${ids.length} mentee${ids.length === 1 ? '' : 's'} added to ${clanName}`);
+      setPeople((prev) => prev.filter((p) => !ids.includes(p.id)));
+      setSelected(new Set());
+      setAlreadyHere((prev) => {
+        const n = new Set(prev);
+        ids.forEach((id) => n.add(id));
+        return n;
+      });
+      onChanged();
+    } catch (e) { toast.error(extractApiErrorMessage(e, 'Could not add')); }
+    finally { setBusy(null); }
+  };
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const allVisibleSelected = visiblePeople.length > 0 && visiblePeople.every((p) => selected.has(p.id));
+  const toggleAll = () => {
+    if (allVisibleSelected) {
+      setSelected((prev) => {
+        const n = new Set(prev);
+        visiblePeople.forEach((p) => n.delete(p.id));
+        return n;
+      });
+      return;
+    }
+    setSelected((prev) => {
+      const n = new Set(prev);
+      visiblePeople.forEach((p) => n.add(p.id));
+      return n;
+    });
   };
 
   const invite = async () => {
@@ -1021,9 +1118,25 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
     finally { setInviting(false); }
   };
 
+  const selectedCount = visiblePeople.filter((p) => selected.has(p.id)).length;
+
   return (
     <Drawer open onClose={onClose} title="Add mentees" subtitle={`Bring people into ${clanName}`}
-      footer={<div className="flex justify-end"><button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm">Close</button></div>}>
+      footer={
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm">Close</button>
+          {fromCompletedClan && (
+            <button
+              onClick={addSelected}
+              disabled={busy === 'batch' || selectedCount === 0}
+              className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {busy === 'batch' ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              Add{selectedCount ? ` (${selectedCount})` : ''}
+            </button>
+          )}
+        </div>
+      }>
       <div className="space-y-5">
         {!standing && <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Invite someone new</label>
@@ -1039,34 +1152,83 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
         </div>}
         {standing && <p className="text-sm text-slate-500">Choose mentees from your organization. They keep their other memberships, enrollments, and work.</p>}
 
-        <div className="pt-4 border-t border-slate-100">
-          <label className="block text-sm font-medium text-slate-700 mb-1">Available people <span className="text-slate-400 font-normal">(including mentees of other clans)</span></label>
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or email…" className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          {standing && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">From completed clan</label>
+              <SelectMenu
+                ariaLabel="From completed clan"
+                value={sourceClanId}
+                onChange={(id) => { setSourceClanId(id); setQuery(''); setSelected(new Set()); }}
+                options={[
+                  { value: '', label: 'All available people' },
+                  ...completedClans.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                placeholder={completedClans.length ? 'All available people' : 'No completed clans yet'}
+                className="w-full"
+              />
+              {!completedClans.length && (
+                <p className="mt-1 text-xs text-slate-400">Completed clans you mentored will appear here after program close.</p>
+              )}
+            </div>
+          )}
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className="block text-sm font-medium text-slate-700">
+                {fromCompletedClan ? 'Mentees from that clan' : <>Available people <span className="text-slate-400 font-normal">(including mentees of other clans)</span></>}
+              </label>
+              {fromCompletedClan && visiblePeople.length > 0 && (
+                <button type="button" onClick={toggleAll} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                  {allVisibleSelected ? 'Clear all' : 'Select all'}
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or email…" className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
           </div>
-          <div className="mt-2 max-h-72 overflow-y-auto divide-y divide-slate-100">
+
+          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
             {loading ? (
               <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-brand-600" /></div>
-            ) : people.length === 0 ? (
+            ) : visiblePeople.length === 0 ? (
               <p className="py-6 text-center text-sm text-slate-400">No people{query ? ' match your search' : ' to add right now'}.</p>
-            ) : people.map((p) => (
+            ) : visiblePeople.map((p) => (
               <div key={p.id} className="flex items-center justify-between gap-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-900 truncate">
-                    {p.name}
-                    {p.role === 'mentor' && (
-                      <span className="ml-2 align-middle rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Mentor — will also learn here</span>
-                    )}
-                    {p.placedClanId && (
-                      <span className="ml-2 align-middle rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">Also in {p.placedClanName}</span>
-                    )}
-                  </p>
-                  <p className="text-xs text-slate-500 truncate">{p.email}</p>
-                </div>
-                <button onClick={() => add(p)} disabled={busy === p.id} className="px-2.5 py-1.5 rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-700 text-xs font-medium hover:bg-brand-100 disabled:opacity-50 inline-flex items-center gap-1.5 shrink-0">
-                  {busy === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />} Add
-                </button>
+                {fromCompletedClan ? (
+                  <label className="flex min-w-0 flex-1 items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggle(p.id)}
+                      className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900 truncate">{p.name}</p>
+                      <p className="text-xs text-slate-500 truncate">{p.email}</p>
+                    </div>
+                  </label>
+                ) : (
+                  <>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900 truncate">
+                        {p.name}
+                        {p.role === 'mentor' && (
+                          <span className="ml-2 align-middle rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Mentor — will also learn here</span>
+                        )}
+                        {p.placedClanId && (
+                          <span className="ml-2 align-middle rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">Also in {p.placedClanName}</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">{p.email}</p>
+                    </div>
+                    <button onClick={() => add(p)} disabled={busy === p.id} className="px-2.5 py-1.5 rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-700 text-xs font-medium hover:bg-brand-100 disabled:opacity-50 inline-flex items-center gap-1.5 shrink-0">
+                      {busy === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />} Add
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
