@@ -887,7 +887,7 @@ class LinearRoadmapService {
    * step (same title) in ANY roadmap of the same lineage: the org base + every
    * local import of it. Reports the most-advanced status across copies.
    */
-  async getMenteeStepStatus(roadmapId, menteeId) {
+  async getMenteeStepStatus(roadmapId, menteeId, clanId = null) {
     const steps = await this.getSteps(roadmapId);
     const roadmap = await models.Roadmap.findByPk(roadmapId, { attributes: ['id', 'importedFrom'] });
 
@@ -911,9 +911,23 @@ class LinearRoadmapService {
     const titleByTaskId = new Map(lineageSteps.map((t) => [t.id, norm(t.title)]));
     const lineageTaskIds = [...titleByTaskId.keys()];
 
+    // Scope to the active clan when present so completed-clan assignments do not
+    // mark steps as already assigned inside a standing clan. Use clanScopedWhere
+    // so single-clan mentees still see legacy rows with null clanId (same as
+    // getMenteeRoadmaps / task lists).
+    const memberships = await listMenteeClans(menteeId);
+    const assignedWhere = clanScopedWhere(
+      {
+        roadmapTaskId: { [Op.in]: lineageTaskIds },
+        menteeId,
+        status: { [Op.ne]: 'cancelled' },
+      },
+      clanId,
+      memberships.length,
+    );
     const assigned = lineageTaskIds.length
       ? await models.AssignedTask.findAll({
-        where: { roadmapTaskId: { [Op.in]: lineageTaskIds }, menteeId, status: { [Op.ne]: 'cancelled' } },
+        where: assignedWhere,
         attributes: ['roadmapTaskId', 'status'],
       })
       : [];
@@ -1096,11 +1110,11 @@ class LinearRoadmapService {
     return this.assignToMentee(mentorId, headId, menteeId, Math.max(0, Number(startStep) || 0), slotId);
   }
 
-  async bulkAssign(mentorId, roadmapId, menteeIds = [], startStep = 0, dueDate = null, stepIndexes = null, stepOverrides = null) {
+  async bulkAssign(mentorId, roadmapId, menteeIds = [], startStep = 0, dueDate = null, stepIndexes = null, stepOverrides = null, clanId = null) {
     const results = [];
     for (const menteeId of menteeIds) {
       try {
-        await this.assignToMentee(mentorId, roadmapId, menteeId, startStep, null, dueDate, stepIndexes, stepOverrides);
+        await this.assignToMentee(mentorId, roadmapId, menteeId, startStep, null, dueDate, stepIndexes, stepOverrides, clanId);
         results.push({ menteeId, ok: true });
       } catch (error) {
         results.push({ menteeId, ok: false, error: error.message });
