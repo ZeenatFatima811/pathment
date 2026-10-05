@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/popover';
 import type { ChatMessage } from '@/lib/types/messaging';
 
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '😢', '🙏'];
 const LONG_PRESS_MS = 420;
 
 interface MessageItemProps {
