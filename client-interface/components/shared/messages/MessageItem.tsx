@@ -341,17 +341,17 @@ export default function MessageItem({
                       ? 'You reacted - click to remove'
                       : 'Click to react'
                   }
-                  className={`inline-flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full border text-[13px] shadow-md backdrop-blur-sm transition-[transform,background-color,box-shadow,opacity] duration-150 ease-out hover:scale-105 active:scale-95 ${
+                  className={`inline-flex h-7 min-w-7 items-center justify-center gap-0.5 rounded-full border text-[14px] shadow-md backdrop-blur-sm transition-[transform,background-color,box-shadow,opacity] duration-150 ease-out hover:scale-110 active:scale-95 ${
                     canPopReaction ? 'animate-msg-reaction-pop' : ''
                   } ${
-                    entry.count > 1 ? 'px-1.5' : 'px-0'
+                    entry.count > 1 ? 'px-1.5' : 'px-0.5'
                   } ${
                     entry.mine
                       ? 'border-emerald-500/55 bg-emerald-500/20 text-foreground ring-1 ring-emerald-500/30'
                       : 'border-border/80 bg-card/95 text-foreground hover:bg-muted'
                   } ${reacting ? 'opacity-60' : ''}`}
                 >
-                  <span className="leading-none drop-shadow-sm">{entry.emoji}</span>
+                  <span className="msg-reaction-emoji leading-none drop-shadow-sm">{entry.emoji}</span>
                   {entry.count > 1 && (
                     <span className="text-[11px] font-semibold tabular-nums leading-none text-muted-foreground">
                       {entry.count}
