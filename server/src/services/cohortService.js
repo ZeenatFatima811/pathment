@@ -31,11 +31,11 @@ const clanLifecycleService = require('./clanLifecycleService');
  */
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-const daysSince = (date) => {
+const daysSince = (date, referenceTime = Date.now()) => {
   if (!date) return Infinity;
   const d = new Date(date).getTime();
   if (Number.isNaN(d)) return Infinity;
-  return Math.floor((Date.now() - d) / 86400000);
+  return Math.floor((referenceTime - d) / 86400000);
 };
 const initialsOf = (first, last) =>
   `${(first || '').charAt(0)}${(last || '').charAt(0)}`.toUpperCase() || '?';
@@ -382,7 +382,13 @@ class CohortService {
     const lastActivityDate = preloads?.scoped
       ? [...tasks.flatMap(t => [t.completedAt, t.submittedAt, t.startedAt]), lastAttendance?.date].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null
       : mentee.menteeProfile?.lastActivityDate || null;
-    const lastActiveDays = daysSince(lastActivityDate);
+    const parsedReferenceTime = preloads?.asOfEnd
+      ? new Date(preloads.asOfEnd).getTime()
+      : Date.now();
+    const referenceTime = Number.isFinite(parsedReferenceTime)
+      ? parsedReferenceTime
+      : Date.now();
+    const lastActiveDays = daysSince(lastActivityDate, referenceTime);
 
     const week = enrollment?.currentWeek || 0;
     const totalWeeks = enrollment?.program?.totalDurationWeeks || 0;
@@ -397,7 +403,7 @@ class CohortService {
     });
 
     // Concrete, rule-based "why" chips for the at-risk / review cards (no AI).
-    const signals = this._buildSignals({ tasks, lastActiveDays, onTimeRate, openBlockers, highSeverityBlockers, momentum, pendingApprovals });
+    const signals = this._buildSignals({ tasks, lastActiveDays, onTimeRate, openBlockers, highSeverityBlockers, momentum, pendingApprovals, referenceTime });
 
     // Their most recent cohort-review attendance (for the "last meeting" chip).
     if (!preloads) {
@@ -441,8 +447,8 @@ class CohortService {
   }
 
   /** Concrete signal chips ("No activity in 6 days", "2 tasks untouched past due"…). */
-  _buildSignals({ tasks, lastActiveDays, onTimeRate, openBlockers, highSeverityBlockers, momentum, pendingApprovals }) {
-    const now = Date.now();
+  _buildSignals({ tasks, lastActiveDays, onTimeRate, openBlockers, highSeverityBlockers, momentum, pendingApprovals, referenceTime = Date.now() }) {
+    const now = referenceTime;
     const untouched = tasks.filter((t) => ['assigned', 'not_started'].includes(t.status) && t.dueDate && new Date(t.dueDate).getTime() < now).length;
     const lateCount = tasks.filter((t) => t.isLate).length;
     const out = [];
@@ -904,7 +910,7 @@ class CohortService {
 
   async preloadMenteeData(menteeIds, scope = {}) {
     const ids = [...new Set(menteeIds)].filter(Boolean);
-    if (!ids.length) return { users: {}, tasks: {}, delays: {}, blockers: {}, attendance: {}, historical: {}, scoped: false };
+    if (!ids.length) return { users: {}, tasks: {}, delays: {}, blockers: {}, attendance: {}, historical: {}, scoped: false, asOfEnd: scope.asOfEnd || null };
     const inIds = { [Op.in]: ids };
     const taskFilter = this.taskFilterForScope(scope);
     const clanFilter = this.clanFilterForScope(scope);
@@ -1003,6 +1009,7 @@ class CohortService {
     return {
       historical,
       scoped: Boolean(scope.programId || scope.clanId || scope.standing),
+      asOfEnd: scope.asOfEnd || null,
       users: allUsers.reduce((acc, u) => { acc[u.id] = u; return acc; }, {}),
       tasks: groupBy(allTasks, 'menteeId'),
       delays: groupBy(allDelays, 'menteeId'),

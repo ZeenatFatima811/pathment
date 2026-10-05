@@ -131,6 +131,24 @@ describe('the clan health snapshot', () => {
       statusLabel: expect.any(String),
       statusReason: expect.any(String),
     }));
+
+    // Program rows are the dashboard's selectable scopes. They carry their own
+    // exact snapshot so choosing one updates every chart and KPI, not only the
+    // clan table.
+    const programScope = res.body.data.programs.find((one) => one.id === program.id);
+    expect(programScope).toEqual(expect.objectContaining({
+      status: program.status,
+      memberCount: expect.any(Number),
+      avgCompletion: expect.any(Number),
+      avgOnTime: expect.any(Number),
+      openBlockers: expect.any(Number),
+      pendingApprovals: expect.any(Number),
+      summary: expect.objectContaining({
+        risk: expect.objectContaining({ high: expect.any(Number), watch: expect.any(Number), low: expect.any(Number) }),
+        completion: expect.any(Array),
+      }),
+      priorityMentees: expect.any(Array),
+    }));
   });
 });
 

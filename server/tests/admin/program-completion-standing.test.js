@@ -35,10 +35,8 @@ describe('formal completion and independent standing clans', () => {
   });
   afterAll(() => sequelize.close());
 
-  it('requires the end date before close, without mutating state on failure', () => within(async () => {
+  it('lets an admin close early while preserving the close snapshot', () => within(async () => {
     await alpha.update({ endDate: '2099-01-01' });
-    await expect(lifecycle.closeProgram(alpha.id, admin)).rejects.toThrow(/end date/);
-    await alpha.update({ endDate: '2020-02-01' });
     await models.CertificateVerification.update({ status: 'pending' }, { where: { templateId: template.id } });
     await expect(lifecycle.closeProgram(alpha.id, admin)).resolves.toBeTruthy();
     expect((await alpha.reload()).closedAt).toBeTruthy();

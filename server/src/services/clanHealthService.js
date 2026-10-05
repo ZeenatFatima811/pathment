@@ -106,7 +106,17 @@ async function loadSnapshot(programIds = null) {
       rowByClan.set(clan.id, clanRows);
       for (let offset = 0; offset < ids.length; offset += 200) {
         const batch = ids.slice(offset, offset + 200);
-        const preloads = await cohortService.preloadMenteeData(batch, { programId: clan.programId, clanId: clan.id });
+        const snapshotEnd = clan.frozenAt || clan.program?.closedAt || null;
+        const preloads = await cohortService.preloadMenteeData(batch, {
+          programId: clan.programId,
+          clanId: clan.id,
+          ...(snapshotEnd
+            ? {
+                asOfEnd: snapshotEnd,
+                asOfDateKey: new Date(snapshotEnd).toISOString().slice(0, 10),
+              }
+            : {}),
+        });
         for (const id of batch) {
           const row = await cohortService.buildMenteeRow(id, preloads);
           if (row) {
@@ -138,6 +148,24 @@ function summarizeRows(rows) {
   return { risk, completion: completion.map((count, index) => ({ label: index === 4 ? '80–100%' : `${index * 20}–${index * 20 + 19}%`, count })) };
 }
 
+function priorityMentees(rows, limit = 12) {
+  return rows
+    .filter((row) => row.risk !== 'low')
+    .sort((a, b) => Number(b.risk === 'high') - Number(a.risk === 'high') || a.absoluteProgress - b.absoluteProgress || a.id.localeCompare(b.id))
+    .slice(0, limit)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      avatar: row.avatar,
+      avatarUrl: row.profilePictureUrl || null,
+      program: row.program,
+      risk: row.risk,
+      riskReason: row.riskReason,
+      absoluteProgress: row.absoluteProgress,
+      onTimeRate: row.onTimeRate,
+    }));
+}
+
 class ClanHealthService {
   invalidate() { snapshots.clear(); }
   /**
@@ -147,7 +175,7 @@ class ClanHealthService {
    */
   async programHealth(programIds = null) {
     const { clans, byClan, rowById, rowByClan, generatedAt } = await loadSnapshot(programIds);
-    const programs = new Map(); // programId -> { id, name, status, clans: [] }
+    const programs = new Map(); // programId -> program metadata + rows + clans
     const orgRows = [...rowById.values()];
 
     for (const clan of clans) {
@@ -191,10 +219,18 @@ class ClanHealthService {
           id: programId,
           name: program?.name || 'Unassigned',
           status: program?.status || null,
+          startDate: program?.startDate || null,
+          endDate: program?.endDate || null,
+          closedAt: program?.closedAt || null,
+          rows: new Map(),
           clans: [],
         });
       }
-      programs.get(programId).clans.push(clanCard);
+      const programEntry = programs.get(programId);
+      programEntry.clans.push(clanCard);
+      // A mentee may hold more than one clan membership in a program. Dashboard
+      // people counts and distributions must count the person once per program.
+      for (const row of rows) programEntry.rows.set(row.id, row);
     }
 
     // Sort clans within each program worst-first; sort programs by attention need.
@@ -205,14 +241,19 @@ class ClanHealthService {
           ? statusRank[a.status] - statusRank[b.status]
           : b.atRisk - a.atRisk
       );
-      const programMembers = p.clans.reduce((s, c) => s + c.memberCount, 0);
-      const programAtRisk = p.clans.reduce((s, c) => s + c.atRisk, 0);
+      const { rows: rowsById, ...program } = p;
+      const programRows = [...rowsById.values()];
       return {
-        ...p,
+        ...program,
         clanCount: p.clans.length,
-        memberCount: programMembers,
-        atRisk: programAtRisk,
-        avgCompletion: avg(p.clans.filter((c) => c.memberCount > 0).map((c) => c.avgCompletion)),
+        memberCount: programRows.length,
+        atRisk: programRows.filter((row) => row.risk !== 'low').length,
+        avgCompletion: avg(programRows.map((row) => row.absoluteProgress)),
+        avgOnTime: avg(programRows.map((row) => row.onTimeRate)),
+        openBlockers: programRows.reduce((sum, row) => sum + (row.openBlockers || 0), 0),
+        pendingApprovals: programRows.reduce((sum, row) => sum + (row.pendingApprovals || 0), 0),
+        summary: summarizeRows(programRows),
+        priorityMentees: priorityMentees(programRows, 5),
       };
     });
     programList.sort((a, b) => b.atRisk - a.atRisk || b.memberCount - a.memberCount);
@@ -227,21 +268,7 @@ class ClanHealthService {
     };
 
     // Flat org-wide "needs attention" rollup: the actual at-risk mentees.
-    const atRiskMentees = orgRows
-      .filter((r) => r.risk !== 'low')
-      .sort((a, b) => Number(b.risk === 'high') - Number(a.risk === 'high') || a.absoluteProgress - b.absoluteProgress || a.id.localeCompare(b.id))
-      .slice(0, 12)
-      .map((r) => ({
-        id: r.id,
-        name: r.name,
-        avatar: r.avatar,
-        avatarUrl: r.profilePictureUrl || null,
-        program: r.program,
-        risk: r.risk,
-        riskReason: r.riskReason,
-        absoluteProgress: r.absoluteProgress,
-        onTimeRate: r.onTimeRate,
-      }));
+    const atRiskMentees = priorityMentees(orgRows);
 
     return { kpis, programs: programList, atRiskMentees, summary: summarizeRows(orgRows), generatedAt };
   }

@@ -81,7 +81,11 @@ class ClanService {
     }
 
     const baseInclude = [
-      { model: models.Program, as: 'program', attributes: ['id', 'name', 'status'] },
+      {
+        model: models.Program,
+        as: 'program',
+        attributes: ['id', 'name', 'status', 'startDate', 'endDate', 'closedAt']
+      },
       { model: models.User, as: 'leadMentor', attributes: ['id', 'firstName', 'lastName', 'profilePictureUrl'] }
     ];
 

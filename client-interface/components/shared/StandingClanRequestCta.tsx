@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Clock, Loader2, Plus } from 'lucide-react';
+import { ArrowRight, Clock, Loader2, Plus, Sparkles, Users } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { completionApi, type StandingRequest } from '@/lib/services/program-completion-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
@@ -13,8 +13,8 @@ import { useProgramCloseoutEnabled } from '@/lib/hooks/useProgramCloseoutEnabled
 import { cn } from '@/components/ui/utils';
 
 const button =
-  'inline-flex items-center gap-2 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
-const field = 'mt-2 w-full rounded-lg border border-slate-300 bg-card p-3 text-sm';
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
+const field = 'mt-2 w-full rounded-xl border border-border bg-card p-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-brand-500';
 
 /**
  * Compact standing-clan request control for the completed-history banner.
@@ -78,8 +78,9 @@ export function StandingClanRequestCta({
   if (approved || hasStandingClan) return null;
   if (loading) {
     return (
-      <span className="inline-flex items-center gap-2 text-sm text-slate-500">
+      <span className="inline-flex items-center gap-2 text-sm text-muted-foreground" role="status">
         <Loader2 className="h-4 w-4 animate-spin" aria-label="Loading standing clan options" />
+        Checking next-step options…
       </span>
     );
   }
@@ -109,27 +110,36 @@ export function StandingClanRequestCta({
   return (
     <>
       {pending ? (
-        <span
+        <div
           className={cn(
-            'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-200',
-            'bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800',
+            'flex max-w-xs items-start gap-2.5 rounded-2xl border border-amber-200',
+            'bg-amber-50/90 px-3.5 py-3 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200',
           )}
         >
-          <Clock className="h-3.5 w-3.5" aria-hidden />
-          Standing clan request pending
-        </span>
+          <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>
+            <span className="block text-xs font-semibold">Standing clan requested</span>
+            <span className="mt-0.5 block text-[11px] leading-relaxed opacity-80">An admin is reviewing your new mentoring space.</span>
+          </span>
+        </div>
       ) : (
-        <button
-          type="button"
-          className={cn(button, 'shrink-0')}
-          onClick={() => {
-            setName(programName ? `${programName} · Standing` : '');
-            setOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Request standing clan
-        </button>
+        <div className="max-w-xs">
+          <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+            Want to keep mentoring? Start a fresh, ongoing clan after admin approval.
+          </p>
+          <button
+            type="button"
+            className={cn(button, 'w-full shrink-0')}
+            onClick={() => {
+              setName(programName ? `${programName} · Standing` : '');
+              setOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            Request standing clan
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
       )}
 
       <Drawer
@@ -149,9 +159,13 @@ export function StandingClanRequestCta({
       >
         <div className="space-y-4">
           {programName ? (
-            <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-              Completed program: <span className="font-medium text-slate-900">{programName}</span>
-            </p>
+            <div className="flex gap-3 rounded-2xl border border-brand-100 bg-brand-50/70 p-4 dark:border-brand-900 dark:bg-brand-950/30">
+              <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" aria-hidden />
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300">Continue after completion</p>
+                <p className="mt-1 text-sm text-foreground">Create a fresh mentoring space connected to <span className="font-semibold">{programName}</span>.</p>
+              </div>
+            </div>
           ) : null}
           <label className="block text-sm font-medium">
             New clan name
@@ -159,6 +173,7 @@ export function StandingClanRequestCta({
               value={name}
               maxLength={150}
               onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. MERN Fellows Alumni"
               className={field}
             />
           </label>
@@ -168,12 +183,15 @@ export function StandingClanRequestCta({
               value={description}
               maxLength={4000}
               onChange={(e) => setDescription(e.target.value)}
+              placeholder="Briefly describe the ongoing mentoring focus"
               className={`${field} min-h-24`}
             />
+            <span className="mt-1 block text-right text-xs text-muted-foreground">{description.length}/4000</span>
           </label>
-          <p className="text-sm text-slate-500">
-            Your new clan starts empty. You choose its mentees separately; their current memberships and program work stay in place.
-          </p>
+          <div className="flex items-start gap-2 rounded-xl bg-muted/70 px-3 py-2.5 text-sm text-muted-foreground">
+            <Users className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <p>Your new clan starts empty. After approval, you choose who joins; completed program records stay unchanged.</p>
+          </div>
         </div>
       </Drawer>
     </>
