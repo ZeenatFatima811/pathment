@@ -464,8 +464,9 @@ class CertificateService {
     const criteria = sortCriteriaByPriority(Array.isArray(template.criteria) ? template.criteria : []);
 
     let clanId = null;
+    let selectedClan = null;
     if (preferredClanId) {
-      const preferred = await models.Clan.findByPk(preferredClanId, { attributes: ['id', 'kind'] });
+      const preferred = await models.Clan.findByPk(preferredClanId, { attributes: ['id', 'name', 'kind'] });
       if (preferred?.kind === 'standing') {
         const mem = await models.ClanMembership.findOne({
           where: {
@@ -476,7 +477,10 @@ class CertificateService {
           },
           attributes: ['clanId'],
         });
-        if (mem) clanId = preferredClanId;
+        if (mem) {
+          clanId = preferredClanId;
+          selectedClan = { id: preferred.id, name: preferred.name };
+        }
       }
     }
     if (!clanId) {
@@ -489,7 +493,10 @@ class CertificateService {
           required: Boolean(template.programId)
         }]
       });
-      clanId = membership?.clan?.id ?? null;
+      if (membership?.clan) {
+        clanId = membership.clan.id;
+        selectedClan = { id: membership.clan.id, name: membership.clan.name };
+      }
     }
 
     const [metrics] = await aggregateMenteeData([menteeId], clanId, template.programId);
@@ -559,7 +566,7 @@ class CertificateService {
         email: mentee.email,
         profilePictureUrl: mentee.profilePictureUrl
       },
-      clan: membership?.clan ? { id: membership.clan.id, name: membership.clan.name } : null,
+      clan: selectedClan,
       criteria: criteria.map((c) => ({
         id: c.id,
         name: c.name,
