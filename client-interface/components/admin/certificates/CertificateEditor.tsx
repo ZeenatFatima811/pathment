@@ -1,7 +1,7 @@
 'use client';
 
 import { useConfirm } from '@/lib/context/ConfirmContext';
-import { NO_CERTIFICATE, reviewSelection, aiSelection } from '@/lib/utils/certificate-decision';
+import { NO_CERTIFICATE, reviewSelection, aiSelection, decisionPayload } from '@/lib/utils/certificate-decision';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -691,7 +691,11 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       setIssuing(true);
       const res = await certificatesApi.issueCertificates({
         templateId: templateId!,
-        recipients: recipientsList
+        recipients: recipientsList,
+        // This page is the admin portal. The confirmation in handleIssue makes
+        // the bypass deliberate; the server still verifies the caller is an
+        // admin before honoring it.
+        adminOverrideReview: true
       });
       if (res.success) {
         toast.success(`Sent ${res.data?.count ?? 0} certificate(s). ${res.data?.skippedNoCertificate ?? 0} marked No certificate; ${(res.data?.skipped ?? 0) - (res.data?.skippedNoCertificate ?? 0)} already issued.`);
@@ -730,8 +734,19 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       toast.error('Save No certificate decisions in the evidence drawer before issuing.');
       return;
     }
-    const excludedCount = recipients.filter(r => reviewRows[r.menteeId]?.decision === 'no_certificate').length;
+    // The admin's visible selection is authoritative on this screen. Counting
+    // the stale review decision here is what produced “1 marked No certificate”
+    // even after the dropdown visibly showed Participation Certificate.
+    const excludedCount = recipients.filter(r => r.tier === NO_CERTIFICATE).length;
     if (excludedCount && !(await confirm({ title: 'Confirm certificate recipients', description: `${recipients.length - excludedCount} selected for certificates; ${excludedCount} marked No certificate will be excluded. Already-issued certificates are skipped automatically.` }))) return;
+    const bypassedReviewCount = recipients.filter(({ menteeId, tier }) => {
+      const review = reviewRows[menteeId];
+      return tier !== NO_CERTIFICATE && (review?.status !== 'verified' || reviewSelection(review) !== tier);
+    }).length;
+    if (bypassedReviewCount && !(await confirm({
+      title: 'Issue as admin without mentor verification?',
+      description: `${bypassedReviewCount} selected certificate${bypassedReviewCount === 1 ? ' has' : 's have'} not been mentor-verified with the badge currently selected. Admin issuance will use your selected badge immediately and bypass mentor verification. This action is recorded in the certificate history.`
+    }))) return;
     const allMentees: any[] = [];
     const seenIds = new Set<string>();
     Object.keys(qualifiedData).forEach(key => {
@@ -781,7 +796,12 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
       setSendingToMentors(true);
       const res = await certificatesApi.sendToClans(templateId, {
         deadline,
-        menteeIds: sendTargetMenteeIds ?? undefined
+        menteeIds: sendTargetMenteeIds ?? undefined,
+        assignments: sendTargetMenteeIds?.map((menteeId) => ({
+          menteeId,
+          ...decisionPayload(adminTiers[menteeId] ?? getEffectiveTier(menteeId)),
+          reason: 'Assigned by an admin before mentor review'
+        }))
       });
       if (res.success) {
         toast.success(res.message);
@@ -2234,7 +2254,8 @@ function SendToClansDrawer({
   selectedCount: number | null;
 }) {
   const [days, setDays] = useState(7);
-  const due = new Date(Date.now() + days * 86_400_000);
+  const [openedAt] = useState(() => Date.now());
+  const due = new Date(openedAt + days * 86_400_000);
 
   return (
     <Drawer

@@ -84,7 +84,8 @@ const sendToClans = catchAsync(async (req, res) => {
     req.params.id, {
       deadline,
       clanIds: req.body?.clanIds || null,
-      menteeIds: req.body?.menteeIds || null
+      menteeIds: req.body?.menteeIds || null,
+      assignments: req.body?.assignments || null
     }, req.user
   );
   res.status(200).json(successResponse(

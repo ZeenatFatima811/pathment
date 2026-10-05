@@ -338,11 +338,21 @@ class CertificateService {
     const buildMenteeRow = (m) => {
       const review = reviewMap.get(m.id);
       const aiEval = aiResultMap[m.id];
+      const issuedTiers = issuedMap[m.id] || [];
+      const issuedTier = issuedTiers[issuedTiers.length - 1] || null;
+      // Once sent, the issued credential is the final answer. Showing an old
+      // AI/review "No certificate" decision beside an issued badge made the
+      // roster contradict itself after a direct admin issuance.
+      if (issuedTier) {
+        const evidenceScore = review?.aiMatchScore ?? (Number(aiEval?.match_score) || 0);
+        return { ...m, assignedDecision: 'award', assignedTier: issuedTier,
+          tierMatches: { [issuedTier]: evidenceScore }, criteriaMatch: evidenceScore, issuedTiers };
+      }
       // The dispatched assignment remains authoritative until explicitly reviewed.
       if (review) {
         const tier = review.decision === 'no_certificate' ? null : (review.finalTier ?? review.aiTier);
         return { ...m, assignedDecision: review.decision, assignedTier: tier, tierMatches: tier ? { [tier]: review.aiMatchScore ?? 0 } : {},
-          criteriaMatch: review.aiMatchScore, issuedTiers: issuedMap[m.id] || [] };
+          criteriaMatch: review.aiMatchScore, issuedTiers };
       }
       if (hasAiRun && aiEval) {
         return {
@@ -351,7 +361,7 @@ class CertificateService {
           assignedTier: aiEval.certificate_tier || null,
           tierMatches: aiEval.certificate_tier ? { [aiEval.certificate_tier]: Number(aiEval.match_score) || 0 } : {},
           criteriaMatch: Number(aiEval.match_score) || 0,
-          issuedTiers: issuedMap[m.id] || []
+          issuedTiers
         };
       }
       return {
@@ -360,7 +370,7 @@ class CertificateService {
         assignedDecision: 'undecided',
         tierMatches: {},
         criteriaMatch: null,
-        issuedTiers: issuedMap[m.id] || []
+        issuedTiers
       };
     };
 
@@ -1622,7 +1632,8 @@ class CertificateService {
    * here, so this throwing means that gate has a hole — better a failed batch
    * than another round of certificates nobody confirmed.
    */
-  _requireReviewedTier(verifiedTiers, menteeId, requestedTier, hasRound) {
+  _requireReviewedTier(verifiedTiers, menteeId, requestedTier, hasRound, adminOverrideReview = false) {
+    if (adminOverrideReview) return requestedTier;
     if (verifiedTiers.has(menteeId)) return verifiedTiers.get(menteeId);
     // No review round on this template: the caller's tier is the only grade
     // there is, and issuing directly is a real workflow.
@@ -1632,7 +1643,7 @@ class CertificateService {
     );
   }
 
-  async issueCertificates({ templateId, menteeIds, mentorId, tier, recipients }, userId, user = null) {
+  async issueCertificates({ templateId, menteeIds, mentorId, tier, recipients, adminOverrideReview = false }, userId, user = null) {
     if (!templateId) {
       throw new ValidationError('Template ID is required');
     }
@@ -1649,6 +1660,11 @@ class CertificateService {
 
       if (!template) {
         throw new NotFoundError('Certificate template not found');
+      }
+      const isAdmin = await authzService.hasAdminAccess(user);
+      const adminBypass = Boolean(adminOverrideReview && isAdmin);
+      if (adminOverrideReview && !isAdmin) {
+        throw new ForbiddenError('Only an admin can bypass mentor verification');
       }
 
       // Issuing is a WRITE and the recipient list comes straight from the
@@ -1692,15 +1708,30 @@ class CertificateService {
         }
       }
 
-      // The mentor's sign-off wins over whatever tier the caller sent. The
-      // review round exists precisely so a human's correction is what gets
-      // issued — an admin clicking Issue from a stale screen must not quietly
-      // revert it to the AI's grade.
+      // A reviewed tier wins for ordinary mentor/admin requests. The admin UI
+      // can explicitly acknowledge a bypass; only that path uses the badge in
+      // the request and records an admin-approved issuance decision below.
       const verifiedTiers = await certificateVerificationService.resolveTiers(templateId, requested);
       const aiNoCertificateIds = new Set((template.aiEvaluation?.results || [])
         .filter(result => result.decision === 'no_certificate').map(result => result.mentee_id || result.id));
-      const excludedIds = new Set(requested.filter(id => verifiedTiers.has(id)
-        ? verifiedTiers.get(id) === null : aiNoCertificateIds.has(id)));
+      const requestedTierByMentee = new Map(
+        Array.isArray(recipients)
+          ? recipients.map((recipient) => [recipient.menteeId, recipient.tier])
+          : requested.map((menteeId) => [menteeId, tier])
+      );
+      if (adminBypass) {
+        const validTierIds = new Set((template.criteria || []).map((item) => item.id));
+        const invalidTier = [...requestedTierByMentee.values()].find((value) =>
+          !['__no_certificate__', 'no_certificate'].includes(value) && !validTierIds.has(value)
+        );
+        if (invalidTier) throw new ValidationError('The selected certificate badge is not part of this template.');
+      }
+      const adminBypassedIds = new Set(adminBypass
+        ? requested.filter((id) => !verifiedTiers.has(id) || verifiedTiers.get(id) !== requestedTierByMentee.get(id))
+        : []);
+      const excludedIds = new Set(requested.filter(id => adminBypass
+        ? ['__no_certificate__', 'no_certificate'].includes(requestedTierByMentee.get(id))
+        : (verifiedTiers.has(id) ? verifiedTiers.get(id) === null : aiNoCertificateIds.has(id))));
 
 
       // Nobody gets the same certificate twice.
@@ -1738,8 +1769,9 @@ class CertificateService {
        */
       const sendable = requested.filter((id) => !alreadyIssuedIds.has(id) && !excludedIds.has(id));
       const hasRound = await certificateVerificationService.hasReviewRound(templateId, { transaction: t });
-      const { unreviewed, unapproved } = await certificateVerificationService
-        .sendBlockers(templateId, sendable, user, { transaction: t });
+      const { unreviewed, unapproved } = adminBypass
+        ? { unreviewed: [], unapproved: [] }
+        : await certificateVerificationService.sendBlockers(templateId, sendable, user, { transaction: t });
       if (unreviewed.length) {
         throw new ForbiddenError(
           unreviewed.length === sendable.length
@@ -1768,8 +1800,8 @@ class CertificateService {
           // read `|| 'participation'`, which handed a certificate to two people
           // who had no review row at all. blockedRecipients now refuses them
           // before this line; the throw is the backstop if it ever does not.
-          tier:      this._requireReviewedTier(verifiedTiers, r.menteeId, r.tier, hasRound),
-          metadata:  {}
+          tier:      this._requireReviewedTier(verifiedTiers, r.menteeId, r.tier, hasRound, adminBypass),
+          metadata:  adminBypassedIds.has(r.menteeId) ? { adminReviewBypassed: true } : {}
         }));
       } else {
         if (!Array.isArray(menteeIds) || menteeIds.length === 0) {
@@ -1782,8 +1814,8 @@ class CertificateService {
           mentorId: mentorId || null,
           issuedBy: userId,
           imageUrl: null,
-          tier:     this._requireReviewedTier(verifiedTiers, menteeId, tier, hasRound),
-          metadata: {}
+          tier:     this._requireReviewedTier(verifiedTiers, menteeId, tier, hasRound, adminBypass),
+          metadata: adminBypassedIds.has(menteeId) ? { adminReviewBypassed: true } : {}
         }));
       }
 
@@ -1801,6 +1833,17 @@ class CertificateService {
         return { instances: [], count: 0, skipped, skippedNoCertificate, alreadyIssued: skippedNoCertificate === 0 };
       }
 
+      if (adminBypassedIds.size) {
+        await certificateVerificationService.recordAdminIssuanceDecisions(
+          template,
+          instancesData
+            .filter((instance) => adminBypassedIds.has(instance.menteeId))
+            .map((instance) => ({ menteeId: instance.menteeId, tier: instance.tier })),
+          user,
+          { transaction: t }
+        );
+      }
+
       const instances = await this._createWithNumbers(instancesData, t);
       await t.commit();
 
@@ -1813,7 +1856,8 @@ class CertificateService {
         instances: instances.map(i => ({ id: i.id, menteeId: i.menteeId })),
         count: instances.length,
         skippedNoCertificate,
-        skipped
+        skipped,
+        reviewBypassed: instances.filter((instance) => adminBypassedIds.has(instance.menteeId)).length
       };
     } catch (err) {
       await t.rollback();

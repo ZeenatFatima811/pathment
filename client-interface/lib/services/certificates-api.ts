@@ -557,7 +557,12 @@ export const certificatesApi = {
    * deadline. Explicit rather than automatic: an admin usually re-runs the AI
    * while tuning the criteria, and notifying on every run is noise.
    */
-  sendToClans: (templateId: string, body: { deadline?: string; clanIds?: string[]; menteeIds?: string[] } = {}) =>
+  sendToClans: (templateId: string, body: {
+    deadline?: string;
+    clanIds?: string[];
+    menteeIds?: string[];
+    assignments?: Array<{ menteeId: string; decision: CertificateDecision; finalTier: string | null; reason?: string }>;
+  } = {}) =>
     apiClient.post<{
       success: boolean;
       message: string;
@@ -641,7 +646,9 @@ export const certificatesApi = {
     menteeIds?: string[]; 
     mentorId?: string; 
     tier?: string;
-    recipients?: Array<{ menteeId: string; tier: string }>
+    recipients?: Array<{ menteeId: string; tier: string }>;
+    /** Admin-only, explicit acknowledgement that the selected tier bypasses mentor review. */
+    adminOverrideReview?: boolean;
   }) => 
     apiClient.post<{
       success: boolean;
@@ -653,6 +660,7 @@ export const certificatesApi = {
         /** Recipients skipped because they already hold a certificate or have a No certificate decision. */
         skipped: number;
         skippedNoCertificate?: number;
+        reviewBypassed?: number;
         /** True when every recipient was already issued, so nothing was sent. */
         alreadyIssued?: boolean;
       };
