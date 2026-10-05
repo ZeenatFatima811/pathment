@@ -105,7 +105,10 @@ export function MenteeEvidenceDrawer({
       const res = await certificatesApi.getMenteeEvidence(templateId, menteeId);
       if (res.success && res.data) {
         setEvidence(res.data);
-        setDraftTier(initialSelection ?? (res.data.verification ? reviewSelection(res.data.verification) : aiSelection(res.data.ai)));
+        // Once a certificate exists, what was actually issued is the truth.
+        // Falling back to the old AI "No certificate" result made the drawer
+        // contradict the credential the admin had just sent.
+        setDraftTier(initialSelection ?? res.data.issued?.tier ?? (res.data.verification ? reviewSelection(res.data.verification) : aiSelection(res.data.ai)));
         setReason(res.data.verification?.overrideReason || '');
         setCriteriaChecks(res.data.verification?.criteriaChecks || []);
       } else {
@@ -173,7 +176,8 @@ export function MenteeEvidenceDrawer({
   }, [menteeId, navigation]);
 
   const tierName = (id: string | null | undefined) =>
-    id === NO_CERTIFICATE ? 'No certificate' : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
+    id === NO_CERTIFICATE ? 'No certificate'
+      : evidence?.criteria.find((c) => c.id === id)?.name || id || '—';
 
   const v = evidence?.verification ?? null;
 
