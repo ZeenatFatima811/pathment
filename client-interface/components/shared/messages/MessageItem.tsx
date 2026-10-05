@@ -110,6 +110,8 @@ export default function MessageItem({
   const [reacting, setReacting] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
+  // null until first paint history load should not pop; only newly added chips do.
+  const seenReactionEmojis = useRef<Set<string> | null>(null);
   const isTemp = message.id.startsWith('temp-');
   const canReact = !isTemp && !reacting;
 
@@ -158,6 +160,18 @@ export default function MessageItem({
   }, [message.reactions, currentUserId]);
 
   const hasReactions = groupedReactions.length > 0;
+
+  useEffect(() => {
+    const next = new Set(groupedReactions.map((g) => g.emoji));
+    if (seenReactionEmojis.current === null) {
+      seenReactionEmojis.current = next;
+      return;
+    }
+    for (const emoji of next) seenReactionEmojis.current.add(emoji);
+  }, [groupedReactions]);
+
+  // After first paint, new/updated chips may pop; history load stays still.
+  const canPopReaction = seenReactionEmojis.current !== null;
 
   // Dynamic border radii for WhatsApp-style message grouping
   const bubbleCornersClass = isMine
@@ -313,7 +327,7 @@ export default function MessageItem({
             >
               {groupedReactions.map((entry) => (
                 <button
-                  key={entry.emoji}
+                  key={`${entry.emoji}-${entry.count}`}
                   type="button"
                   disabled={!canReact}
                   onClick={(e) => {
@@ -327,15 +341,17 @@ export default function MessageItem({
                       ? 'You reacted - click to remove'
                       : 'Click to react'
                   }
-                  className={`inline-flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full border text-[13px] shadow-sm backdrop-blur-sm transition-transform duration-150 motion-reduce:transition-none active:scale-95 ${
+                  className={`inline-flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full border text-[13px] shadow-md backdrop-blur-sm transition-[transform,background-color,box-shadow,opacity] duration-150 ease-out hover:scale-105 active:scale-95 ${
+                    canPopReaction ? 'animate-msg-reaction-pop' : ''
+                  } ${
                     entry.count > 1 ? 'px-1.5' : 'px-0'
                   } ${
                     entry.mine
-                      ? 'border-emerald-500/50 bg-emerald-500/15 text-foreground ring-1 ring-emerald-500/25'
+                      ? 'border-emerald-500/55 bg-emerald-500/20 text-foreground ring-1 ring-emerald-500/30'
                       : 'border-border/80 bg-card/95 text-foreground hover:bg-muted'
                   } ${reacting ? 'opacity-60' : ''}`}
                 >
-                  <span className="leading-none">{entry.emoji}</span>
+                  <span className="leading-none drop-shadow-sm">{entry.emoji}</span>
                   {entry.count > 1 && (
                     <span className="text-[11px] font-semibold tabular-nums leading-none text-muted-foreground">
                       {entry.count}
@@ -351,11 +367,11 @@ export default function MessageItem({
             align={isMine ? 'end' : 'start'}
             sideOffset={10}
             onOpenAutoFocus={(e) => e.preventDefault()}
-            className="w-auto max-w-[calc(100vw-2rem)] rounded-full border border-border/80 bg-card/95 p-1.5 shadow-lg backdrop-blur-md !animate-none transition-opacity duration-150 motion-reduce:transition-none"
+            className="w-auto max-w-[calc(100vw-2rem)] rounded-full border border-border/80 bg-card/95 p-1.5 shadow-lg backdrop-blur-md data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-90 data-[state=open]:slide-in-from-bottom-2 data-[state=open]:duration-200 motion-reduce:data-[state=open]:animate-none"
             aria-label="Choose a reaction"
           >
             <div className="flex items-center gap-0.5">
-              {QUICK_REACTIONS.map((emoji) => {
+              {QUICK_REACTIONS.map((emoji, i) => {
                 const mine = groupedReactions.some(
                   (g) => g.emoji === emoji && g.mine,
                 );
@@ -369,8 +385,9 @@ export default function MessageItem({
                     onClick={() => {
                       void react(emoji);
                     }}
-                    className={`flex h-11 w-11 items-center justify-center rounded-full text-[1.45rem] leading-none transition-transform duration-150 motion-reduce:transition-none hover:scale-125 hover:bg-muted/80 active:scale-110 focus-visible:outline-2 focus-visible:outline-brand-500 ${
-                      mine ? 'bg-muted scale-110' : ''
+                    style={{ animationDelay: `${i * 28}ms` }}
+                    className={`flex h-11 w-11 items-center justify-center rounded-full text-[1.45rem] leading-none transition-transform duration-200 ease-out motion-reduce:transition-none hover:scale-125 hover:bg-muted/80 active:scale-110 focus-visible:outline-2 focus-visible:outline-brand-500 animate-in fade-in zoom-in-75 duration-200 fill-mode-both motion-reduce:animate-none ${
+                      mine ? 'bg-muted scale-110 ring-1 ring-brand-500/30' : ''
                     }`}
                   >
                     {emoji}

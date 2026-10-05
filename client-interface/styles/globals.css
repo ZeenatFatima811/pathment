@@ -591,3 +591,27 @@ input::-webkit-credentials-auto-fill-button {
     animation: pathment-panel-enter 240ms cubic-bezier(.22, 1, .36, 1);
   }
 }
+
+/* Chat reaction chip WhatsApp-style pop from the bubble edge. */
+@keyframes msg-reaction-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.28);
+    filter: blur(1px);
+  }
+  60% {
+    opacity: 1;
+    transform: translate3d(0, -3px, 0) scale(1.22);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .animate-msg-reaction-pop {
+    animation: msg-reaction-pop 420ms cubic-bezier(0.2, 1.35, 0.32, 1) both;
+  }
+}
