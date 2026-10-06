@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
-const { NotFoundError, ForbiddenError } = require('../utils/errors/errorTypes');
+const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const authzService = require('./authzService');
 const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
@@ -55,7 +55,8 @@ class MentorshipPauseService {
 
   /**
    * Resolve which clan to act on. If clanId is given it must be one the mentor
-   * runs; otherwise we pick the mentee's (first) clan among the mentor's clans.
+   * runs. When omitted, only auto-pick if the mentee shares exactly one clan
+   * with the mentor — never an arbitrary first row (standing vs cohort).
    */
   async _resolveClanId(user, menteeId, clanId) {
     const { clanIds } = await this._scopeClans(user);
@@ -64,12 +65,15 @@ class MentorshipPauseService {
       if (!clanIds.includes(clanId)) throw new ForbiddenError('You do not mentor this clan');
       return clanId;
     }
-    const m = await models.ClanMembership.findOne({
+    const rows = await models.ClanMembership.findAll({
       where: { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } },
       attributes: ['clanId'], raw: true,
     });
-    if (!m) throw new NotFoundError('Mentee not found in your clans');
-    return m.clanId;
+    if (!rows.length) throw new NotFoundError('Mentee not found in your clans');
+    if (rows.length > 1) {
+      throw new ValidationError('clanId is required when the mentee belongs to more than one of your clans');
+    }
+    return rows[0].clanId;
   }
 
   // ── pause / resume (manual, mentor-driven) ────────────────────────────────
@@ -113,6 +117,7 @@ class MentorshipPauseService {
           actionUrl: '/mentee/dashboard',
           actionLabel: 'Ask my mentor to unpause me',
           emailSubject: `You've been paused in ${clanName}`,
+          clanId,
           // No relatedEntityId: a later pause episode must not be deduped against
           // an earlier one — each pause should send its own notice.
         },
@@ -397,11 +402,13 @@ class MentorshipPauseService {
   }
 
   /** Pause state of one mentee within the viewer's clans (for the profile). */
-  async menteeState(user, menteeId) {
+  async menteeState(user, menteeId, preferredClanId = null) {
     const { clanIds, clanNameById } = await this._scopeClans(user);
     if (!clanIds.length) return { paused: false, clanId: null };
+    const where = { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } };
+    if (preferredClanId && clanIds.includes(preferredClanId)) where.clanId = preferredClanId;
     const m = await models.ClanMembership.findOne({
-      where: { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } },
+      where,
       attributes: ['clanId', 'status', 'pausedAt', 'pausedReason'], raw: true,
     });
     if (!m) return { paused: false, clanId: null };

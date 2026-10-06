@@ -218,7 +218,7 @@ export default function MentorPromotions() {
     if (c.stage === 'nominated') { setInterviewing(c); return; }
     if (next === 'promoted') {
       if (!isAdmin) { toast.error('Only an admin can finalise a promotion'); return; }
-      try { setBusy(c.id); await mentorApi.promote(c.id); toast.success(`${c.name.split(' ')[0]} promoted to co-mentor`); refetch(); }
+      try { setBusy(c.id); await mentorApi.promote(c.id, c.targetClanId || undefined); toast.success(`${c.name.split(' ')[0]} promoted to co-mentor`); refetch(); }
       catch (error) { toast.error(extractApiErrorMessage(error, 'Could not promote')); }
       finally { setBusy(null); }
       return;

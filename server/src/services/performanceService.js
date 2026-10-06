@@ -35,6 +35,15 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 /** On track reads as Strong rather than perfect, leaving room to be ahead. */
 const ON_TRACK_SCORE = 75;
 
+/** End of the UTC calendar day for an as-of instant (whole close day counts). */
+function asOfDayEnd(asOf) {
+  if (!asOf) return null;
+  const d = new Date(asOf);
+  if (Number.isNaN(d.getTime())) return null;
+  const dateKey = d.toISOString().slice(0, 10);
+  return { dateKey, end: new Date(`${dateKey}T23:59:59.999Z`) };
+}
+
 class PerformanceService {
   /**
    * Attendance tallies per mentee, in one grouped query.
@@ -47,6 +56,9 @@ class PerformanceService {
     const empty = {};
     if (!menteeIds.length) return empty;
 
+    const sessionWhere = { ...cohortService.clanWhere(scope) };
+    if (scope.asOfDateKey) sessionWhere.sessionDate = { [Op.lte]: scope.asOfDateKey };
+
     const rows = await models.CohortReviewEntry.findAll({
       where: { menteeId: { [Op.in]: menteeIds } },
       attributes: [
@@ -54,7 +66,7 @@ class PerformanceService {
         'attendance',
         [sequelize.fn('COUNT', sequelize.col('CohortReviewEntry.id')), 'n']
       ],
-      include: [{ model: models.CohortReviewSession, as: 'session', attributes: [], required: true, where: cohortService.clanWhere(scope) }],
+      include: [{ model: models.CohortReviewSession, as: 'session', attributes: [], required: true, where: sessionWhere }],
       group: ['mentee_id', 'attendance'],
       raw: true
     });
@@ -76,6 +88,7 @@ class PerformanceService {
     const out = {};
     if (!menteeIds.length) return out;
 
+    const asOfSql = scope.asOfEnd ? 'AND completed_at <= :asOfEnd' : '';
     const [rows] = await sequelize.query(
       `SELECT mentee_id,
               COUNT(DISTINCT date_trunc('week', completed_at))::int AS active_weeks
@@ -83,10 +96,12 @@ class PerformanceService {
         WHERE organization_id = :organizationId AND mentee_id IN (:ids)
           AND status = 'completed'
           AND completed_at IS NOT NULL
+          ${asOfSql}
           AND ${cohortService.taskSql(scope)}
         GROUP BY mentee_id`,
-      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
+      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId(), asOfEnd: scope.asOfEnd || null } }
     );
+
 
     for (const row of rows) out[row.mentee_id] = Number(row.active_weeks) || 0;
     return out;
@@ -100,15 +115,18 @@ class PerformanceService {
     const out = {};
     if (!menteeIds.length) return out;
 
+    const asOfSql = scope.asOfEnd ? 'AND completed_at IS NOT NULL AND completed_at <= :asOfEnd' : '';
     const [rows] = await sequelize.query(
       `SELECT mentor_id, AVG(final_rating)::float AS avg_rating
          FROM assigned_tasks
         WHERE organization_id = :organizationId AND final_rating IS NOT NULL
           AND mentor_id IS NOT NULL
+          ${asOfSql}
           AND ${cohortService.taskSql(scope)}
         GROUP BY mentor_id`,
-      { replacements: { organizationId: requireWorkspaceId() } }
+      { replacements: { organizationId: requireWorkspaceId(), asOfEnd: scope.asOfEnd || null } }
     );
+
 
     for (const row of rows) out[row.mentor_id] = Number(row.avg_rating) || null;
     return out;
@@ -119,14 +137,17 @@ class PerformanceService {
     const out = {};
     if (!menteeIds.length) return out;
 
+    const asOfSql = scope.asOfEnd ? 'AND COALESCE(assigned_at, created_at) <= :asOfEnd' : '';
     const [rows] = await sequelize.query(
       `SELECT DISTINCT ON (mentee_id) mentee_id, mentor_id
          FROM assigned_tasks
         WHERE organization_id = :organizationId AND mentee_id IN (:ids) AND mentor_id IS NOT NULL
+          ${asOfSql}
           AND ${cohortService.taskSql(scope)}
         ORDER BY mentee_id, updated_at DESC`,
-      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
+      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId(), asOfEnd: scope.asOfEnd || null } }
     );
+
 
     for (const row of rows) out[row.mentee_id] = row.mentor_id;
     return out;
@@ -149,6 +170,7 @@ class PerformanceService {
       .map(([size, hours]) => `WHEN '${size}' THEN ${hours}`)
       .join(' ');
 
+    const asOfSql = scope.asOfEnd ? 'AND a.completed_at IS NOT NULL AND a.completed_at <= :asOfEnd' : '';
     const [rows] = await sequelize.query(
       `SELECT a.mentee_id,
               COALESCE(SUM(
@@ -161,10 +183,12 @@ class PerformanceService {
          JOIN roadmap_tasks rt ON rt.id = a.roadmap_task_id
         WHERE a.organization_id = :organizationId AND rt.organization_id = :organizationId AND a.mentee_id IN (:ids)
           AND a.status = 'completed'
+          ${asOfSql}
           AND ${cohortService.taskSql(scope, 'a')}
         GROUP BY a.mentee_id`,
-      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId() } }
+      { replacements: { ids: menteeIds, organizationId: requireWorkspaceId(), asOfEnd: scope.asOfEnd || null } }
     );
+
 
     for (const row of rows) out[row.mentee_id] = Number(row.hours) || 0;
     return out;
@@ -208,16 +232,24 @@ class PerformanceService {
    * @param {string[]} menteeIds
    * @param {object}   options.clanId  scopes which dimensions are switched off
    */
-  async scoreMentees(menteeIds, { clanId = null, programId = null, live = false } = {}) {
+  async scoreMentees(menteeIds, { clanId = null, programId = null, live = false, asOf = null } = {}) {
     const ids = [...new Set(menteeIds)].filter(Boolean);
     if (!ids.length) return { weights: {}, disabled: [], mentees: [], eligibility: ELIGIBILITY };
+    // Standing clans share a programId with the closed cohort but must never
+    // inherit that program scope — only this clan's own work is scored.
+    let standing = false;
     if (clanId) {
       const clan = await models.Clan.findByPk(clanId);
-      if (clan?.kind === 'standing') return { weights: {}, disabled: [], mentees: [], eligibility: ELIGIBILITY };
-      programId = clan?.programId || programId;
+      if (clan?.kind === 'standing') standing = true;
+      else programId = clan?.programId || programId;
     }
-    const scope = { clanId, programId };
-    // Closed programs no longer use enrollment snapshots — always score live.
+    const bounds = asOfDayEnd(asOf);
+    const scope = {
+      clanId,
+      ...(standing ? { standing: true } : { programId }),
+      ...(bounds ? { asOfEnd: bounds.end, asOfDateKey: bounds.dateKey } : {}),
+    };
+    // Score live evidence; when asOf is set (program close date), ignore later activity.
 
     const [
       { weights, disabled, disabledBy },

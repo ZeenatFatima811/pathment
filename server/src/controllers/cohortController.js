@@ -2,6 +2,7 @@ const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const cohortService = require('../services/cohortService');
 const submissionService = require('../services/submissionService');
+const mentorshipPauseService = require('../services/mentorshipPauseService');
 const authzService = require('../services/authzService');
 const { AuthorizationError } = require('../utils/errors/errorTypes');
 const { requestedClanId } = require('../middlewares/portalScope');
@@ -56,7 +57,7 @@ const getMenteeProfile = catchAsync(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Mentee not found', statusCode: 404 });
   }
   // Pause state within the requester's clans (drives the Pause/Resume control).
-  try { profile.pauseState = await require('../services/mentorshipPauseService').menteeState(req.user, req.params.id); } catch { profile.pauseState = { paused: false, clanId: null }; }
+  try { profile.pauseState = await mentorshipPauseService.menteeState(req.user, req.params.id, clanId); } catch { profile.pauseState = { paused: false, clanId: null }; }
   res.status(200).json(successResponse('Mentee profile retrieved', { profile }));
 });
 
@@ -140,7 +141,7 @@ const nudge = catchAsync(async (req, res) => {
   if (!menteeId) {
     return res.status(400).json({ success: false, message: 'menteeId is required', statusCode: 400 });
   }
-  const result = await cohortService.sendNudge(req.user.id, menteeId, message);
+  const result = await cohortService.sendNudge(req.user.id, menteeId, message, requestedClanId(req));
   res.status(200).json(successResponse('Nudge sent', result));
 });
 
@@ -149,7 +150,7 @@ const nudge = catchAsync(async (req, res) => {
  * The logged-in mentee's own fairness read (self-facing My Progress).
  */
 const getMyProgress = catchAsync(async (req, res) => {
-  const profile = await cohortService.getMenteeDetail(req.user.id);
+  const profile = await cohortService.getMenteeDetail(req.user.id, { clanId: requestedClanId(req) });
   if (!profile) {
     return res.status(404).json({ success: false, message: 'No progress data yet', statusCode: 404 });
   }
@@ -160,7 +161,7 @@ const getMyProgress = catchAsync(async (req, res) => {
  * PATCH /api/mentor/mentee/:id/personality  { consistency, communication, resilience, independence }
  */
 const updatePersonality = catchAsync(async (req, res) => {
-  const personality = await cohortService.updatePersonality(req.params.id, req.body);
+  const personality = await cohortService.updatePersonality(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(200).json(successResponse('Personality updated', { personality }));
 });
 
@@ -168,7 +169,7 @@ const updatePersonality = catchAsync(async (req, res) => {
  * POST /api/mentor/mentee/:id/insights  { kind, note, source }
  */
 const addInsight = catchAsync(async (req, res) => {
-  const insight = await cohortService.addInsight(req.params.id, req.body, req.user.id);
+  const insight = await cohortService.addInsight(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('Insight logged', { insight }, 201));
 });
 
@@ -176,25 +177,25 @@ const addInsight = catchAsync(async (req, res) => {
  * POST /api/mentor/mentee/:id/notes  { date?, kind?, summary, sentiment?, issues?, nextSteps? }
  */
 const logMeetingNote = catchAsync(async (req, res) => {
-  const note = await cohortService.logMeetingNote(req.params.id, req.body, req.user.id);
+  const note = await cohortService.logMeetingNote(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('1:1 logged', { note }, 201));
 });
 
 /** POST /api/mentor/mentee/:id/collaborators  { name, role, email? } */
 const addCollaborator = catchAsync(async (req, res) => {
-  const collaborator = await cohortService.addCollaborator(req.params.id, req.body, req.user.id);
+  const collaborator = await cohortService.addCollaborator(req.params.id, req.body, req.user.id, requestedClanId(req));
   res.status(201).json(successResponse('Collaborator invited', { collaborator }, 201));
 });
 
 /** DELETE /api/mentor/mentee/:id/collaborators/:collaboratorId */
 const removeCollaborator = catchAsync(async (req, res) => {
-  const result = await cohortService.removeCollaborator(req.params.id, req.params.collaboratorId);
+  const result = await cohortService.removeCollaborator(req.params.id, req.params.collaboratorId, req.user.id, requestedClanId(req));
   res.status(200).json(successResponse('Collaborator removed', result));
 });
 
 /** POST /api/mentor/mentee/:id/attendance  { status } — cohort-review attendance. */
 const setAttendance = catchAsync(async (req, res) => {
-  const result = await cohortService.setAttendance(req.params.id, req.user.id, req.body.status);
+  const result = await cohortService.setAttendance(req.params.id, req.user.id, req.body.status, requestedClanId(req));
   res.status(200).json(successResponse('Attendance saved', result));
 });
 
@@ -206,7 +207,7 @@ const getReviewAttendance = catchAsync(async (req, res) => {
 
 /** GET /api/mentor/mentee/:id/attendance/history — full cohort-review attendance (newest first). */
 const getMenteeAttendanceHistory = catchAsync(async (req, res) => {
-  const history = await cohortService.getAttendanceHistory(req.params.id);
+  const history = await cohortService.getAttendanceHistory(req.params.id, requestedClanId(req));
   res.status(200).json(successResponse('Attendance history', { history }));
 });
 

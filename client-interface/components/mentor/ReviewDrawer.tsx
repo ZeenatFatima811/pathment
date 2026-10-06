@@ -68,7 +68,7 @@ export function ReviewDrawer({
 
   const submit = async (decision: Decision) => {
     if (readOnly) {
-      toast.error('This cohort is historical. Reviews are view-only.');
+      toast.error('This clan is historical. Reviews are view-only.');
       return;
     }
     if ((decision === 'approved_notes' || decision === 'changes' || decision === 'rejected') && !notes.trim()) {
@@ -126,7 +126,7 @@ export function ReviewDrawer({
       width="lg"
       footer={
         readOnly ? (
-          <p className="w-full text-sm text-slate-500">Completed program history — grading is unavailable.</p>
+          <p className="w-full text-sm text-slate-500">This clan is completed — grading is unavailable.</p>
         ) : (
         <div className="grid grid-cols-2 gap-2 w-full">
           <button onClick={() => submit('approved')} disabled={!!busy || !allRequiredTicked} title={!allRequiredTicked ? 'Tick the required criteria first' : undefined}

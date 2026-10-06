@@ -40,7 +40,7 @@ class ProgramService {
     } = programData;
 
     // Validate dates
-    if (status === 'completed') throw new ValidationError('Create the program first, then use the formal close action after its end date');
+    if (status === 'completed') throw new ValidationError('Create the program first, then use the formal close action');
     if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
       throw new ValidationError('End date must be after start date');
     }

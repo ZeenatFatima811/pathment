@@ -23,7 +23,7 @@ const authzService = require('../../src/services/authzService');
 const certificateService = require('../../src/services/certificateService');
 const mentorshipPauseService = require('../../src/services/mentorshipPauseService');
 const promotionService = require('../../src/services/promotionService');
-const { runWithRequestContext } = require('../../src/utils/auditContext');
+const { runWithRequestContext, getRequestContext } = require('../../src/utils/auditContext');
 const { cleanDb, createAdmin, createMentee, createProgram } = require('../helpers/seed');
 
 describe('a user who is both an admin and a mentor', () => {
@@ -45,7 +45,7 @@ describe('a user who is both an admin and a mentor', () => {
     await clanService.addMember(theirs.id, { userId: theirMentee.id, role: 'mentee' });
   });
 
-  const inPortal = (role, fn) => runWithRequestContext({ portalRole: role }, fn);
+  const inPortal = (role, fn) => runWithRequestContext({ ...getRequestContext(), portalRole: role }, fn);
 
   describe('what they HOLD never changes', () => {
     /**

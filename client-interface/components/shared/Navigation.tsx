@@ -120,7 +120,13 @@ export default function Navigation({ role }: NavigationProps) {
   // The badge follows the sidebar clan picker so it always matches the page:
   // 'All clans' = the full queue, otherwise just that clan's share.
   const isMentorNav = role === 'mentor';
-  const { unreadMessageCount, approvalCounts } = useNavBadges({ userId: user?.id, isMentor: isMentorNav, portal: role, activeClanId });
+  const { unreadMessageCount, approvalCounts } = useNavBadges({
+    userId: user?.id,
+    isMentor: isMentorNav,
+    portal: role,
+    activeClanId,
+    menteeActiveClanId,
+  });
   const approvalsBadgeCount = activeClanId === ALL_CLANS
     ? approvalCounts.total
     : (approvalCounts.byClan[activeClanId] || 0);

@@ -163,7 +163,7 @@ export default function MenteeBlockers() {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, menteeActiveClanId]);
 
   useEffect(() => {
     fetchAll();
@@ -184,7 +184,7 @@ export default function MenteeBlockers() {
         );
       })
       .catch(() => setTasks([]));
-  }, [user?.id]);
+  }, [user?.id, menteeActiveClanId]);
 
   const resolve = async (id: string) => {
     try {

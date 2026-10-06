@@ -177,6 +177,31 @@ describe('certificate verification permission and hand-off', () => {
       expect(rows.map((row) => row.menteeId)).toEqual([second.id]);
     });
 
+    it('sends the admin-selected badge for review without overwriting the AI baseline', async () => {
+      await template.update({
+        aiEvaluation: {
+          results: [{ mentee_id: mentee.id, decision: 'no_certificate', certificate_tier: null, match_score: 0 }],
+          ranAt: new Date().toISOString()
+        }
+      });
+
+      await verification.sendToClans(template.id, {
+        menteeIds: [mentee.id],
+        assignments: [{ menteeId: mentee.id, decision: 'award', finalTier: 'bronze', reason: 'Admin reviewed resumed work' }]
+      }, admin);
+
+      const row = await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: mentee.id } });
+      expect(row).toMatchObject({
+        status: 'pending',
+        aiDecision: 'no_certificate',
+        aiTier: null,
+        decision: 'award',
+        finalTier: 'bronze',
+        overridden: true,
+        overrideReason: 'Admin reviewed resumed work'
+      });
+    });
+
     it('explains when selected mentees have no AI result yet', async () => {
       await withAiResults();
       await expect(verification.sendToClans(template.id, { menteeIds: [coMentor.id] }, admin))

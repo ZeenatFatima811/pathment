@@ -111,6 +111,32 @@ describe('an unreviewed grade cannot be issued', () => {
       expect(blockers.unapproved).toEqual([]);
       expect(blockers.unreviewed).toEqual([unreviewed.id]);
     });
+
+    it('lets an admin explicitly issue their selected badge without mentor verification', async () => {
+      const res = await certificateService.issueCertificates({
+        templateId: template.id,
+        recipients: [{ menteeId: unreviewed.id, tier: 'participation' }],
+        adminOverrideReview: true
+      }, admin.id, admin);
+
+      expect(res).toMatchObject({ count: 1, reviewBypassed: 1, skippedNoCertificate: 0 });
+      const issued = await models.CertificateInstance.findOne({ where: { templateId: template.id, menteeId: unreviewed.id } });
+      expect(issued.tier).toBe('participation');
+      expect(issued.metadata).toMatchObject({ adminReviewBypassed: true });
+      const decision = await models.CertificateVerification.findOne({ where: { templateId: template.id, menteeId: unreviewed.id } });
+      expect(decision).toMatchObject({
+        status: 'verified', stage: 'admin_approved', decision: 'award', finalTier: 'participation', verifiedBy: admin.id
+      });
+      expect(decision.overrideReason).toMatch(/Issued directly by admin/i);
+    });
+
+    it('does not let a mentor claim the admin bypass', async () => {
+      await expect(certificateService.issueCertificates({
+        templateId: template.id,
+        recipients: [{ menteeId: unreviewed.id, tier: 'participation' }],
+        adminOverrideReview: true
+      }, lead.id, lead)).rejects.toThrow(/Only an admin can bypass/i);
+    });
   });
 
   describe('a template with no review round is not gated', () => {
